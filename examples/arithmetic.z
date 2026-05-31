@@ -1,0 +1,14 @@
+package main
+
+// Basic arithmetic example
+func main() {
+    var a int32 = 10
+    var b int32 = 20
+    var sum int32 = a + b
+    var diff int32 = a - b
+    var prod int32 = a * b
+}
+
+func compute(x int32, y int32) int32 {
+    return x + y
+}

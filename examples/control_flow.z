@@ -1,0 +1,31 @@
+package main
+
+// Control flow examples
+func main() {
+    // If-else
+    var x int32 = 10
+    if x > 5 {
+        Print("greater")
+    } else {
+        Print("smaller")
+    }
+
+    // For loop (infinite style)
+    var count int32 = 0
+    for count < 10 {
+        count = count + 1
+    }
+
+    // While-style for
+    for {
+        breakLoop()
+    }
+}
+
+func breakLoop() {
+    // placeholder
+}
+
+func Print(msg string) {
+    // placeholder
+}

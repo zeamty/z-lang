@@ -1,0 +1,20 @@
+package main
+
+//z:export
+func KernelMain() {
+    // Write "Z OS" to VGA at 0xB8000 using AT&T syntax
+    asm.Instr("movl $0xB8000, %eax")
+    asm.Instr("movb $90, (%eax)")
+    asm.Instr("movb $15, 1(%eax)")
+    asm.Instr("movb $32, 2(%eax)")
+    asm.Instr("movb $15, 3(%eax)")
+    asm.Instr("movb $79, 4(%eax)")
+    asm.Instr("movb $15, 5(%eax)")
+    asm.Instr("movb $83, 6(%eax)")
+    asm.Instr("movb $15, 7(%eax)")
+
+    // Halt
+    for {
+        asm.Instr("hlt")
+    }
+}

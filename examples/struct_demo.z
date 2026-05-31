@@ -1,0 +1,31 @@
+package main
+
+// Struct and type examples
+
+type Point struct {
+    X int32
+    Y int32
+}
+
+//z:packed
+type Header struct {
+    Flags uint8
+    Size  uint16
+}
+
+func main() {
+    var p Point
+    p.X = 10
+    p.Y = 20
+
+    var h Header
+    h.Flags = 1
+    h.Size = 100
+}
+
+func NewPoint(x int32, y int32) Point {
+    var p Point
+    p.X = x
+    p.Y = y
+    return p
+}

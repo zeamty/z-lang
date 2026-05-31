@@ -1,0 +1,11 @@
+package main
+
+// Simple hello world example
+func main() {
+    var msg string = "Hello, Z!"
+    Print(msg)
+}
+
+func Print(msg string) {
+    // Placeholder - would use console output
+}

@@ -1,0 +1,19 @@
+package main
+
+import "asm"
+
+// Inline assembly example
+func main() {
+    // Simple halt instruction
+    asm.Instr("nop")
+
+    // AT&T syntax for x86 (when targeting x86)
+    asm.Instr("movl $$42, %eax")
+
+    // Multiple instructions
+    asm.Block(`
+        nop
+        nop
+        nop
+    `)
+}
