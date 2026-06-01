@@ -14,6 +14,7 @@ type Parser struct {
 
 	directives []string // accumulated directives
 	errors     []string
+	iotaValue  int
 }
 
 // New creates a new Parser
@@ -63,7 +64,13 @@ func (p *Parser) ParseFile() *File {
 
 	// Imports
 	for p.tok.Type == lexer.T_IMPORT {
-		file.Imports = append(file.Imports, p.parseImport())
+		imp := p.parseImport()
+		switch d := imp.(type) {
+		case *ImportDecl:
+			file.Imports = append(file.Imports, d)
+		case *ImportBlock:
+			file.Imports = append(file.Imports, d.Imports...)
+		}
 	}
 
 	// Top-level declarations
@@ -91,18 +98,40 @@ func (p *Parser) parsePackage() *PackageDecl {
 	return &PackageDecl{Name: name}
 }
 
-func (p *Parser) parseImport() *ImportDecl {
-	decl := &ImportDecl{}
-
+func (p *Parser) parseImport() Decl {
 	// Check for alias
-	if p.tok.Type == lexer.T_IDENT {
-		decl.Name = p.parseIdent()
+	if p.tok.Type == lexer.T_IDENT && p.peek.Type == lexer.T_STRING {
+		alias := p.parseIdent()
+		decl := &ImportDecl{Name: alias}
+		pathTok := p.expect(lexer.T_STRING)
+		decl.Path = &BasicLit{Type: lexer.T_STRING, Value: pathTok.Literal}
+		return decl
 	}
 
-	p.expect(lexer.T_STRING)
-	decl.Path = &BasicLit{Type: lexer.T_STRING, Value: p.tok.Literal}
+	if p.tok.Type == lexer.T_STRING {
+		decl := &ImportDecl{}
+		decl.Path = &BasicLit{Type: lexer.T_STRING, Value: p.tok.Literal}
+		p.nextTok()
+		return decl
+	}
 
-	return decl
+	if p.tok.Type == lexer.T_LPAREN {
+		p.nextTok()
+		block := &ImportBlock{}
+		for p.tok.Type != lexer.T_RPAREN {
+			imp := &ImportDecl{}
+			if p.tok.Type == lexer.T_IDENT {
+				imp.Name = p.parseIdent()
+			}
+			pathTok := p.expect(lexer.T_STRING)
+			imp.Path = &BasicLit{Type: lexer.T_STRING, Value: pathTok.Literal}
+			block.Imports = append(block.Imports, imp)
+		}
+		p.expect(lexer.T_RPAREN)
+		return block
+	}
+
+	return nil
 }
 
 func (p *Parser) parseDecl() Decl {
@@ -127,34 +156,84 @@ func (p *Parser) parseDecl() Decl {
 	}
 }
 
-func (p *Parser) parseConstDecl() *ConstDecl {
+func (p *Parser) parseConstDecl() Decl {
 	p.expect(lexer.T_CONST)
-	name := p.parseIdent()
 
+	if p.tok.Type == lexer.T_LPAREN {
+		p.nextTok()
+		decl := &ConstBlock{}
+		iotaVal := 0
+		for p.tok.Type != lexer.T_RPAREN && p.tok.Type != lexer.T_EOF {
+			p.iotaValue = iotaVal
+			name := p.parseIdent()
+
+			var typ Type
+			if p.tok.Type != lexer.T_ASSIGN {
+				typ = p.parseType()
+			}
+
+			p.expect(lexer.T_ASSIGN)
+			val := p.parseExpr()
+			decl.Consts = append(decl.Consts, &ConstDecl{Name: name, Type: typ, Value: val})
+			iotaVal++
+		}
+		p.expect(lexer.T_RPAREN)
+		return decl
+	}
+
+	name := p.parseIdent()
 	var typ Type
 	if p.tok.Type != lexer.T_ASSIGN {
 		typ = p.parseType()
 	}
-
 	p.expect(lexer.T_ASSIGN)
 	val := p.parseExpr()
-
 	return &ConstDecl{Name: name, Type: typ, Value: val}
 }
 
-func (p *Parser) parseVarDecl(dirs []string) *VarDecl {
+func (p *Parser) parseVarDecl(dirs []string) Decl {
 	p.expect(lexer.T_VAR)
-	name := p.parseIdent()
 
+	if p.tok.Type == lexer.T_LPAREN {
+		p.nextTok()
+		decl := &VarBlock{}
+		for p.tok.Type != lexer.T_RPAREN && p.tok.Type != lexer.T_EOF {
+			p.collectDirectives()
+			d := p.directives
+			p.directives = nil
+			name := p.parseIdent()
+
+			var typ Type
+			var val Expr
+			if p.tok.Type == lexer.T_ASSIGN {
+				p.nextTok()
+				val = p.parseExpr()
+			} else {
+				typ = p.parseType()
+				if p.tok.Type == lexer.T_ASSIGN {
+					p.nextTok()
+					val = p.parseExpr()
+				}
+			}
+
+			directive := ""
+			if len(d) > 0 {
+				directive = d[0]
+			}
+			decl.Vars = append(decl.Vars, &VarDecl{Name: name, Type: typ, Value: val, Directive: directive})
+		}
+		p.expect(lexer.T_RPAREN)
+		return decl
+	}
+
+	name := p.parseIdent()
 	var typ Type
 	var val Expr
 
 	if p.tok.Type == lexer.T_ASSIGN {
-		// var x = value
 		p.nextTok()
 		val = p.parseExpr()
 	} else {
-		// var x type
 		typ = p.parseType()
 		if p.tok.Type == lexer.T_ASSIGN {
 			p.nextTok()
@@ -212,10 +291,28 @@ func (p *Parser) parseFuncType() *FuncType {
 	// Results
 	if p.tok.Type == lexer.T_LPAREN {
 		p.nextTok()
-		ft.Results = p.parseParamList()
+		for p.tok.Type != lexer.T_RPAREN && p.tok.Type != lexer.T_EOF {
+			field := &Field{}
+			if p.tok.Type == lexer.T_IDENT {
+				first := p.parseIdent()
+				if p.tok.Type == lexer.T_COMMA || p.tok.Type == lexer.T_RPAREN {
+					field.Type = first
+				} else if p.tok.Type == lexer.T_IDENT {
+					field.Name = first
+					field.Type = p.parseType()
+				} else {
+					field.Type = first
+				}
+			} else {
+				field.Type = p.parseType()
+			}
+			ft.Results = append(ft.Results, field)
+			if p.tok.Type == lexer.T_COMMA {
+				p.nextTok()
+			}
+		}
 		p.expect(lexer.T_RPAREN)
 	} else if p.tok.Type != lexer.T_LBRACE && p.tok.Type != lexer.T_SEMICOLON {
-		// Single unnamed result
 		ft.Results = []*Field{{Type: p.parseType()}}
 	}
 
@@ -348,10 +445,18 @@ func (p *Parser) parseStmt() Stmt {
 		return p.parseSwitchStmt()
 	case lexer.T_BREAK:
 		p.nextTok()
-		return &BreakStmt{}
+		stmt := &BreakStmt{}
+		if p.tok.Type == lexer.T_IDENT {
+			stmt.Label = p.parseIdent()
+		}
+		return stmt
 	case lexer.T_CONTINUE:
 		p.nextTok()
-		return &ContinueStmt{}
+		stmt := &ContinueStmt{}
+		if p.tok.Type == lexer.T_IDENT {
+			stmt.Label = p.parseIdent()
+		}
+		return stmt
 	case lexer.T_GOTO:
 		p.nextTok()
 		return &GotoStmt{Label: p.parseIdent()}
@@ -365,13 +470,32 @@ func (p *Parser) parseStmt() Stmt {
 		return &DeclStmt{Decl: p.parseConstDecl()}
 
 	default:
+		// Check for label: IDENT ':'
+		if p.tok.Type == lexer.T_IDENT && p.peek.Type == lexer.T_COLON {
+			label := p.parseIdent()
+			p.expect(lexer.T_COLON)
+			return &LabeledStmt{Label: label, Stmt: p.parseStmt()}
+		}
+
 		// Expression or assignment
 		expr := p.parseExpr()
-		if p.tok.Type == lexer.T_ASSIGN || p.tok.Type == lexer.T_COLON_ASSIGN {
+		if p.tok.Type == lexer.T_ASSIGN || p.tok.Type == lexer.T_COLON_ASSIGN ||
+			p.tok.Type == lexer.T_PLUS_ASSIGN || p.tok.Type == lexer.T_MINUS_ASSIGN ||
+			p.tok.Type == lexer.T_STAR_ASSIGN || p.tok.Type == lexer.T_SLASH_ASSIGN ||
+			p.tok.Type == lexer.T_AND_ASSIGN || p.tok.Type == lexer.T_OR_ASSIGN {
 			op := p.tok.Type
 			p.nextTok()
-			rhs := p.parseExpr()
-			return &AssignStmt{Lhs: []Expr{expr}, Rhs: []Expr{rhs}, Tok: op}
+			rhs := []Expr{p.parseExpr()}
+			for p.tok.Type == lexer.T_COMMA {
+				p.nextTok()
+				rhs = append(rhs, p.parseExpr())
+			}
+			return &AssignStmt{Lhs: []Expr{expr}, Rhs: rhs, Tok: op}
+		}
+		if p.tok.Type == lexer.T_INC || p.tok.Type == lexer.T_DEC {
+			op := p.tok.Type
+			p.nextTok()
+			return &IncDecStmt{X: expr, Op: op}
 		}
 		return &ExprStmt{X: expr}
 	}
@@ -562,6 +686,22 @@ func (p *Parser) parsePrimaryExpr() Expr {
 
 func (p *Parser) parseOperand() Expr {
 	switch p.tok.Type {
+	case lexer.T_TRUE:
+		lit := &BasicLit{Type: lexer.T_TRUE, Value: "true"}
+		p.nextTok()
+		return lit
+	case lexer.T_FALSE:
+		lit := &BasicLit{Type: lexer.T_FALSE, Value: "false"}
+		p.nextTok()
+		return lit
+	case lexer.T_NIL:
+		lit := &BasicLit{Type: lexer.T_NIL, Value: "nil"}
+		p.nextTok()
+		return lit
+	case lexer.T_IOTA:
+		lit := &BasicLit{Type: lexer.T_INT, Value: fmt.Sprintf("%d", p.iotaValue)}
+		p.nextTok()
+		return lit
 	case lexer.T_IDENT:
 		return p.parseIdent()
 	case lexer.T_INT:

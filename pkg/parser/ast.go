@@ -30,14 +30,20 @@ type Decl interface {
 func (File) node()        {}
 func (PackageDecl) node() {}
 func (ImportDecl) node()  {}
+func (ImportBlock) node() {}
 func (ConstDecl) node()   {}
+func (ConstBlock) node()  {}
 func (VarDecl) node()     {}
+func (VarBlock) node()    {}
 func (FuncDecl) node()    {}
 func (TypeDecl) node()    {}
 
 func (PackageDecl) declNode() {}
 func (ImportDecl) declNode()  {}
+func (ImportBlock) declNode() {}
 func (ConstDecl) declNode()   {}
+func (ConstBlock) declNode()  {}
+func (VarBlock) declNode()    {}
 func (VarDecl) declNode()     {}
 func (FuncDecl) declNode()    {}
 func (TypeDecl) declNode()    {}
@@ -58,6 +64,8 @@ func (AssignStmt) node()     {}
 func (ExprStmt) node()       {}
 func (DeclStmt) node()       {}
 func (EmptyStmt) node()      {}
+func (IncDecStmt) node()     {}
+func (LabeledStmt) node()    {}
 
 func (BlockStmt) stmtNode()      {}
 func (ReturnStmt) stmtNode()     {}
@@ -74,6 +82,8 @@ func (AssignStmt) stmtNode()     {}
 func (ExprStmt) stmtNode()       {}
 func (DeclStmt) stmtNode()       {}
 func (EmptyStmt) stmtNode()      {}
+func (IncDecStmt) stmtNode()     {}
+func (LabeledStmt) stmtNode()    {}
 
 // Expression node() implementations
 func (Ident) node()          {}
@@ -126,6 +136,10 @@ type PackageDecl struct {
 type ImportDecl struct {
 	Name   *Ident    // alias, optional
 	Path   *BasicLit // string literal
+}
+
+type ImportBlock struct {
+	Imports []*ImportDecl
 }
 
 // === Type declarations ===
@@ -198,6 +212,10 @@ type ConstDecl struct {
 	Value Expr
 }
 
+type ConstBlock struct {
+	Consts []*ConstDecl
+}
+
 // === Var ===
 
 type VarDecl struct {
@@ -205,6 +223,10 @@ type VarDecl struct {
 	Type      Type
 	Value     Expr
 	Directive string // //z:align, //z:volatile
+}
+
+type VarBlock struct {
+	Vars []*VarDecl
 }
 
 // === Func ===
@@ -290,6 +312,16 @@ type DeclStmt struct {
 }
 
 type EmptyStmt struct{}
+
+type IncDecStmt struct {
+	X  Expr
+	Op lexer.TokenType
+}
+
+type LabeledStmt struct {
+	Label *Ident
+	Stmt  Stmt
+}
 
 // === Expressions ===
 

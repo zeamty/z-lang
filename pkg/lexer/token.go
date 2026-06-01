@@ -99,6 +99,12 @@ const (
 	T_UNSAFE
 	T_VOLATILE
 
+	// Predeclared identifiers
+	T_TRUE
+	T_FALSE
+	T_NIL
+	T_IOTA
+
 	// Directive prefix
 	T_DIRECTIVE // //z:
 )
@@ -128,6 +134,10 @@ var Keywords = map[string]TokenType{
 	"interface":   T_INTERFACE,
 	"unsafe":      T_UNSAFE,
 	"volatile":    T_VOLATILE,
+		"true":        T_TRUE,
+		"false":       T_FALSE,
+		"nil":         T_NIL,
+		"iota":        T_IOTA,
 }
 
 // Token represents a lexical token
