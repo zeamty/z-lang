@@ -319,31 +319,6 @@ func (g *Generator) emitCall(call *parser.CallExpr) string {
 	return tmp
 }
 
-// Stub methods for code that will be defined in asm.go and builtin.go
-func (g *Generator) emitAsmCall(name string, args []parser.Expr) string {
-	if len(args) > 0 {
-		if lit, ok := args[0].(*parser.BasicLit); ok {
-			instr := strings.Trim(lit.Value, "\"")
-			instr = strings.ReplaceAll(instr, "`", "")
-			instr = strings.ReplaceAll(instr, "$", "$$")
-			instr = strings.ReplaceAll(instr, "\n", "\\n")
-			g.emitter.emitf("call void asm sideeffect \"%s\", \"\"()", instr)
-		}
-	}
-	return ""
-}
-
-func (g *Generator) emitMemCall(name string, args []parser.Expr) string {
-	return "" // Will be defined in builtin.go
-}
-
-func (g *Generator) emitAtomicCall(name string, args []parser.Expr) string {
-	return "" // Will be defined in builtin.go
-}
-
-func (g *Generator) emitUnsafeCall(name string, args []parser.Expr) string {
-	return "" // Will be defined in builtin.go
-}
 
 func (g *Generator) binOp(op lexer.TokenType, typ types.Type) string {
 	isFloat := false
