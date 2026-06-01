@@ -19,15 +19,18 @@ type Generator struct {
 	stringCnt int
 	tmpCnt    int
 	labelCnt  int
+	tr        *TypeResolver
 }
 
 func New() *Generator {
-	return &Generator{
+	g := &Generator{
 		functions: make(map[string]*parser.FuncDecl),
 		structs:   make(map[string]*types.Struct),
 		vars:      make(map[string]*parser.VarDecl),
 		strings:   make(map[string]int),
 	}
+	g.tr = newTypeResolver(g.vars, g.functions)
+	return g
 }
 
 func (g *Generator) Generate(file *parser.File) string {
@@ -73,7 +76,7 @@ func (g *Generator) emitf(format string, args ...interface{}) {
 }
 
 func (g *Generator) emitGlobalVar(name string, v *parser.VarDecl) {
-	typ := g.resolveType(v.Type)
+	typ := g.tr.resolveType(v.Type)
 	align := ""
 	if strings.Contains(v.Directive, "align") {
 		align = ", align 4096"
@@ -81,7 +84,7 @@ func (g *Generator) emitGlobalVar(name string, v *parser.VarDecl) {
 
 	if v.Value != nil {
 		if lit, ok := v.Value.(*parser.BasicLit); ok {
-			g.emitf("@%s = global %s %s%s", name, typ.LLVMType(), g.literalValue(lit), align)
+			g.emitf("@%s = global %s %s%s", name, typ.LLVMType(), literalValue(lit), align)
 		} else {
 			g.emitf("@%s = global %s 0%s", name, typ.LLVMType(), align)
 		}
@@ -103,7 +106,7 @@ func (g *Generator) emitFunction(fn *parser.FuncDecl) {
 
 	retType := "void"
 	if len(fn.Type.Results) > 0 {
-		retType = g.resolveType(fn.Type.Results[0].Type).LLVMType()
+		retType = g.tr.resolveType(fn.Type.Results[0].Type).LLVMType()
 	}
 
 	params := ""
@@ -111,7 +114,7 @@ func (g *Generator) emitFunction(fn *parser.FuncDecl) {
 		if i > 0 {
 			params += ", "
 		}
-		params += g.resolveType(p.Type).LLVMType() + " %" + p.Name.Name
+		params += g.tr.resolveType(p.Type).LLVMType() + " %" + p.Name.Name
 	}
 
 	g.emitf("%s %s @%s(%s) {", linkage, retType, fn.Name.Name, params)
@@ -132,7 +135,7 @@ func (g *Generator) emitStmt(stmt parser.Stmt) {
 	switch s := stmt.(type) {
 	case *parser.DeclStmt:
 		if vd, ok := s.Decl.(*parser.VarDecl); ok {
-			typ := g.resolveType(vd.Type)
+			typ := g.tr.resolveType(vd.Type)
 			g.emitf("  %%v.%s = alloca %s", vd.Name.Name, typ.LLVMType())
 			if vd.Value != nil {
 				val := g.emitExpr(vd.Value)
@@ -144,7 +147,7 @@ func (g *Generator) emitStmt(stmt parser.Stmt) {
 		for i, lhs := range s.Lhs {
 			if ident, ok := lhs.(*parser.Ident); ok {
 				rhs := g.emitExpr(s.Rhs[i])
-				typ := g.exprType(s.Rhs[i])
+				typ := g.tr.exprType(s.Rhs[i])
 				g.emitf("  store %s %s, %s* %%v.%s", typ.LLVMType(), rhs, typ.LLVMType(), ident.Name)
 			}
 		}
@@ -152,7 +155,7 @@ func (g *Generator) emitStmt(stmt parser.Stmt) {
 	case *parser.ReturnStmt:
 		if len(s.Results) > 0 {
 			val := g.emitExpr(s.Results[0])
-			typ := g.exprType(s.Results[0])
+			typ := g.tr.exprType(s.Results[0])
 			g.emitf("  ret %s %s", typ.LLVMType(), val)
 		} else {
 			g.emit("  ret void")
@@ -210,18 +213,18 @@ func (g *Generator) emitStmt(stmt parser.Stmt) {
 func (g *Generator) emitExpr(expr parser.Expr) string {
 	switch e := expr.(type) {
 	case *parser.Ident:
-		typ := g.exprType(expr)
+		typ := g.tr.exprType(expr)
 		g.tmpCnt++
 		g.emitf("  %%t%d = load %s, %s* %%v.%s", g.tmpCnt, typ.LLVMType(), typ.LLVMType(), e.Name)
 		return fmt.Sprintf("%%t%d", g.tmpCnt)
 
 	case *parser.BasicLit:
-		return g.literalValue(e)
+		return literalValue(e)
 
 	case *parser.BinaryExpr:
 		x := g.emitExpr(e.X)
 		y := g.emitExpr(e.Y)
-		typ := g.exprType(e.X)
+		typ := g.tr.exprType(e.X)
 		g.tmpCnt++
 		op := g.binOp(e.Op, typ)
 		g.emitf("  %%t%d = %s %s %s, %s", g.tmpCnt, op, typ.LLVMType(), x, y)
@@ -232,7 +235,7 @@ func (g *Generator) emitExpr(expr parser.Expr) string {
 
 	case *parser.UnaryExpr:
 		x := g.emitExpr(e.X)
-		typ := g.exprType(e.X)
+		typ := g.tr.exprType(e.X)
 		g.tmpCnt++
 		if e.Op == lexer.T_MINUS {
 			g.emitf("  %%t%d = sub %s 0, %s", g.tmpCnt, typ.LLVMType(), x)
@@ -270,14 +273,14 @@ func (g *Generator) emitCall(call *parser.CallExpr) string {
 			args += ", "
 		}
 		val := g.emitExpr(arg)
-		typ := g.exprType(arg)
+		typ := g.tr.exprType(arg)
 		args += typ.LLVMType() + " " + val
 	}
 
 	g.tmpCnt++
 	retType := "void"
 	if len(fn.Type.Results) > 0 {
-		retType = g.resolveType(fn.Type.Results[0].Type).LLVMType()
+		retType = g.tr.resolveType(fn.Type.Results[0].Type).LLVMType()
 	}
 	g.emitf("  %%t%d = call %s @%s(%s)", g.tmpCnt, retType, funName, args)
 
@@ -303,69 +306,6 @@ func (g *Generator) emitAsmCall(name string, args []parser.Expr) string {
 		}
 	}
 	return ""
-}
-
-func (g *Generator) resolveType(t parser.Type) types.Type {
-	switch tt := t.(type) {
-	case *parser.Ident:
-		if basic, ok := types.BasicTypes[tt.Name]; ok {
-			return basic
-		}
-		return types.BasicTypes["int"]
-
-	case *parser.PointerType:
-		return &types.Pointer{Base: g.resolveType(tt.Base)}
-
-	case *parser.ArrayType:
-		if lit, ok := tt.Len.(*parser.BasicLit); ok {
-			len := types.ParseInt(lit.Value)
-			return &types.Array{Len: int(len), Elt: g.resolveType(tt.Elt)}
-		}
-		return &types.Array{Len: 0, Elt: g.resolveType(tt.Elt)}
-
-	default:
-		return types.BasicTypes["int"]
-	}
-}
-
-func (g *Generator) exprType(expr parser.Expr) types.Type {
-	switch e := expr.(type) {
-	case *parser.Ident:
-		if v, ok := g.vars[e.Name]; ok {
-			return g.resolveType(v.Type)
-		}
-		return types.BasicTypes["int64"]
-
-	case *parser.BasicLit:
-		if e.Type == lexer.T_INT {
-			return types.BasicTypes["int64"]
-		}
-		if e.Type == lexer.T_FLOAT {
-			return types.BasicTypes["float64"]
-		}
-		return types.BasicTypes["int64"]
-
-	case *parser.BinaryExpr:
-		return g.exprType(e.X)
-
-	case *parser.CallExpr:
-		if ident, ok := e.Fun.(*parser.Ident); ok {
-			if fn := g.functions[ident.Name]; fn != nil {
-				if len(fn.Type.Results) > 0 {
-					return g.resolveType(fn.Type.Results[0].Type)
-				}
-			}
-		}
-	}
-
-	return types.BasicTypes["int64"]
-}
-
-func (g *Generator) literalValue(lit *parser.BasicLit) string {
-	if lit.Type == lexer.T_INT {
-		return fmt.Sprintf("%d", types.ParseInt(lit.Value))
-	}
-	return "0"
 }
 
 func (g *Generator) binOp(op lexer.TokenType, typ types.Type) string {
