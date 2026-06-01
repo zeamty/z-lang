@@ -1,0 +1,44 @@
+package atomic
+
+func LoadInt32(addr *int32) int32 {
+    return *addr
+}
+
+func StoreInt32(addr *int32, val int32) {
+    *addr = val
+}
+
+func AddInt32(addr *int32, delta int32) int32 {
+    *addr = *addr + delta
+    return *addr
+}
+
+func SwapInt32(addr *int32, new int32) int32 {
+    old := *addr
+    *addr = new
+    return old
+}
+
+func CompareAndSwapInt32(addr *int32, old, new int32) bool {
+    if *addr == old {
+        *addr = new
+        return true
+    }
+    return false
+}
+
+func LoadUint32(addr *uint32) uint32 {
+    return *addr
+}
+
+func StoreUint32(addr *uint32, val uint32) {
+    *addr = val
+}
+
+func CompareAndSwapUint32(addr *uint32, old, new uint32) bool {
+    if *addr == old {
+        *addr = new
+        return true
+    }
+    return false
+}

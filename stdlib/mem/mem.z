@@ -1,0 +1,13 @@
+package mem
+
+import "unsafe"
+
+func Memcpy(dst, src unsafe.Pointer, n uintptr) {
+}
+
+func Memset(dst unsafe.Pointer, c byte, n uintptr) {
+}
+
+func Memmove(dst, src unsafe.Pointer, n uintptr) {
+    Memcpy(dst, src, n)
+}

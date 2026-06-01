@@ -1,0 +1,28 @@
+package unsafe
+
+// Pointer is a generic pointer type.
+type Pointer uintptr
+
+// Sizeof returns the size in bytes of a value of type T.
+func Sizeof(x any) uintptr {
+    // Compiler intrinsic
+    return 0
+}
+
+// Offsetof returns the offset of a field within a struct type.
+func Offsetof(x any) uintptr {
+    // Compiler intrinsic
+    return 0
+}
+
+// Alignof returns the alignment of a type.
+func Alignof(x any) uintptr {
+    // Compiler intrinsic
+    return 0
+}
+
+// Slice converts a pointer to an array to a slice.
+func Slice(ptr Pointer, length uintptr) []byte {
+    // Compiler intrinsic
+    return nil
+}

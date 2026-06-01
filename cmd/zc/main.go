@@ -4,130 +4,158 @@ import (
 	"flag"
 	"fmt"
 	"os"
-	"path/filepath"
 	"strings"
 
 	"github.com/zeamty/z-lang/pkg/codegen"
 	"github.com/zeamty/z-lang/pkg/lexer"
 	"github.com/zeamty/z-lang/pkg/parser"
+	"github.com/zeamty/z-lang/pkg/sema"
 )
 
 func main() {
 	var (
-		output   string
-		emitLLVM bool
-		help     bool
+		output    string
+		emitLLVM  bool
+		help      bool
+		buildTags string
 	)
 
 	flag.StringVar(&output, "o", "", "output file")
 	flag.BoolVar(&emitLLVM, "emit-llvm", false, "emit LLVM IR instead of object file")
+	flag.StringVar(&buildTags, "tags", "", "comma-separated build tags (e.g. amd64,linux)")
 	flag.BoolVar(&help, "h", false, "show help")
 	flag.Parse()
 
 	if help || flag.NArg() == 0 {
 		fmt.Println("Z Language Compiler")
-		fmt.Println("Usage: zc [options] <file.z>")
+		fmt.Println("Usage: zc [options] <file.z> [file2.z ...]")
 		flag.PrintDefaults()
 		os.Exit(0)
 	}
 
-	input := flag.Arg(0)
-	if !strings.HasSuffix(input, ".z") {
-		fmt.Fprintf(os.Stderr, "error: input file must have .z extension\n")
-		os.Exit(1)
-	}
+	inputs := flag.Args()
+	activeTags := parseBuildTags(buildTags)
 
-	// Read source
-	src, err := os.ReadFile(input)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "error: %v\n", err)
-		os.Exit(1)
-	}
-
-	// Compile
-	result, err := compile(input, string(src), emitLLVM)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "error: %v\n", err)
-		os.Exit(1)
-	}
-
-	// Determine output file
-	if output == "" {
-		if emitLLVM {
-			output = strings.Replace(input, ".z", ".ll", 1)
-		} else {
-			output = strings.Replace(input, ".z", ".o", 1)
+	var allFiles []*parser.File
+	for _, input := range inputs {
+		if !strings.HasSuffix(input, ".z") {
+			fmt.Fprintf(os.Stderr, "warning: skipping non-.z file: %s\n", input)
+			continue
 		}
+
+		src, err := os.ReadFile(input)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "error: %v\n", err)
+			os.Exit(1)
+		}
+
+		if !checkBuildTags(string(src), activeTags) {
+			continue
+		}
+
+		l := lexer.New(string(src))
+		p := parser.New(l)
+		file := p.ParseFile()
+
+		if p.HasErrors() {
+			fmt.Fprintf(os.Stderr, "parse errors in %s:\n%s\n", input,
+				strings.Join(p.Errors(), "\n"))
+			os.Exit(1)
+		}
+		allFiles = append(allFiles, file)
 	}
 
-	// Write output
-	err = os.WriteFile(output, []byte(result), 0644)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+	if len(allFiles) == 0 {
+		fmt.Fprintf(os.Stderr, "error: no valid input files\n")
 		os.Exit(1)
 	}
 
-	fmt.Printf("compiled %s -> %s\n", input, output)
-}
+	merged := mergeFiles(allFiles)
 
-func compile(filename, src string, emitLLVM bool) (string, error) {
-	// Lexer
-	l := lexer.New(src)
-
-	// Parser
-	p := parser.New(l)
-	file := p.ParseFile()
-
-	if p.HasErrors() {
-		return "", fmt.Errorf("parse errors:\n%s", strings.Join(p.Errors(), "\n"))
-	}
-
-	// Debug output
-	if os.Getenv("Z_DEBUG") != "" {
-		debugAST(file)
+	// Semantic analysis
+	analyzer := sema.NewAnalyzer()
+	errs := analyzer.Analyze(merged)
+	if errs.HasErrors() {
+		fmt.Fprintf(os.Stderr, "semantic errors:\n%s\n", errs.String())
+		os.Exit(1)
 	}
 
 	// Codegen
 	g := codegen.New()
-	ir := g.Generate(file)
+	ir := g.Generate(merged)
 
-	if emitLLVM {
-		return ir, nil
-	}
-
-	// Use llc to compile LLVM IR to object file
-	// This is a placeholder - actual compilation would use llc
-	return ir, nil
-}
-
-func debugAST(file *parser.File) {
-	fmt.Println("=== AST Debug ===")
-	fmt.Printf("Package: %s\n", file.Pkg.Name.Name)
-	for _, imp := range file.Imports {
-		fmt.Printf("Import: %s\n", imp.Path.Value)
-	}
-	for _, decl := range file.Decls {
-		switch d := decl.(type) {
-		case *parser.FuncDecl:
-			fmt.Printf("Func: %s\n", d.Name.Name)
-		case *parser.VarDecl:
-			fmt.Printf("Var: %s\n", d.Name.Name)
-		case *parser.TypeDecl:
-			fmt.Printf("Type: %s\n", d.Name.Name)
+	// Determine output
+	if output == "" {
+		base := strings.TrimSuffix(inputs[0], ".z")
+		if emitLLVM {
+			output = base + ".ll"
+		} else {
+			output = base + ".o"
 		}
 	}
-	fmt.Println("=================")
-}
 
-func compileToObject(ir, output string) error {
-	// Write temporary .ll file
-	tmpLL := filepath.Join(os.TempDir(), "z_temp.ll")
-	err := os.WriteFile(tmpLL, []byte(ir), 0644)
+	err := os.WriteFile(output, []byte(ir), 0644)
 	if err != nil {
-		return err
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		os.Exit(1)
 	}
 
-	// Run llc
-	// TODO: implement actual compilation pipeline
-	return nil
+	fmt.Printf("compiled %d files -> %s\n", len(allFiles), output)
+}
+
+func parseBuildTags(tagStr string) map[string]bool {
+	tags := make(map[string]bool)
+	if tagStr == "" {
+		return tags
+	}
+	for _, t := range strings.Split(tagStr, ",") {
+		t = strings.TrimSpace(t)
+		if t != "" {
+			tags[t] = true
+		}
+	}
+	return tags
+}
+
+func checkBuildTags(src string, activeTags map[string]bool) bool {
+	if len(activeTags) == 0 {
+		return true
+	}
+	lines := strings.Split(src, "\n")
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if strings.HasPrefix(line, "//z:build") {
+			tagSpec := strings.TrimPrefix(line, "//z:build")
+			tagSpec = strings.TrimSpace(tagSpec)
+
+			if strings.HasPrefix(tagSpec, "!") {
+				negTag := strings.TrimPrefix(tagSpec, "!")
+				if activeTags[negTag] {
+					return false
+				}
+			} else {
+				if !activeTags[tagSpec] {
+					return false
+				}
+			}
+		}
+	}
+	return true
+}
+
+func mergeFiles(files []*parser.File) *parser.File {
+	if len(files) == 1 {
+		return files[0]
+	}
+
+	merged := &parser.File{}
+	for _, f := range files {
+		if merged.Pkg == nil {
+			merged.Pkg = f.Pkg
+		}
+		merged.Imports = append(merged.Imports, f.Imports...)
+		merged.Decls = append(merged.Decls, f.Decls...)
+		merged.Directives = append(merged.Directives, f.Directives...)
+	}
+	return merged
 }

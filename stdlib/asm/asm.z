@@ -1,0 +1,35 @@
+package asm
+
+// Operand represents an inline assembly operand constraint.
+// These are compiler intrinsics handled by codegen directly.
+type Operand struct{}
+
+// In creates an input operand constraint.
+func In(constraint string, variable any) Operand {
+    return Operand{}
+}
+
+// Out creates an output operand constraint.
+func Out(constraint string, variable any) Operand {
+    return Operand{}
+}
+
+// InOut creates an input/output operand constraint.
+func InOut(constraint string, inVar, outVar any) Operand {
+    return Operand{}
+}
+
+// Clobbers specifies registers that are modified by the asm block.
+func Clobbers(registers ...string) Operand {
+    return Operand{}
+}
+
+// Instr executes a single assembly instruction.
+func Instr(template string, operands ...Operand) {
+    // Compiler intrinsic
+}
+
+// Block executes multiple assembly instructions.
+func Block(template string, operands ...Operand) {
+    // Compiler intrinsic
+}
