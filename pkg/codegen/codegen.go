@@ -74,6 +74,9 @@ func (g *Generator) Generate(file *parser.File) string {
 	g.emitter.emitRaw("declare void @llvm.memset.p0i8.i64(i8* nocapture, i8, i64, i1) nounwind")
 	g.emitter.emitRaw("")
 
+	// Pre-scan for string literals before declaring them
+	g.collectStrings(file)
+
 	// String constants
 	g.emitter.emitRaw(g.emitter.declareStrings())
 
@@ -223,6 +226,14 @@ func (g *Generator) emitExpr(expr parser.Expr) string {
 		return tmp
 
 	case *parser.BasicLit:
+		if e.Type == lexer.T_STRING {
+			strName := g.emitter.newString(e.Value)
+			strLen := len(strings.Trim(e.Value, "\""))
+			tmp := g.emitter.newTmp()
+			g.emitter.emitf("%s = getelementptr [%d x i8], [%d x i8]* %s, i64 0, i64 0",
+				tmp, strLen+1, strLen+1, strName)
+			return tmp
+		}
 		return literalValue(e)
 
 	case *parser.BinaryExpr:
@@ -744,4 +755,105 @@ func (g *Generator) isParam(name string) bool {
 		}
 	}
 	return false
+}
+
+func (g *Generator) collectStrings(file *parser.File) {
+	for _, decl := range file.Decls {
+		switch d := decl.(type) {
+		case *parser.FuncDecl:
+			g.collectStmtStrings(d.Body)
+		case *parser.VarDecl:
+			if d.Value != nil {
+				g.collectExprStrings(d.Value)
+			}
+		}
+	}
+}
+
+func (g *Generator) collectStmtStrings(stmt parser.Stmt) {
+	if stmt == nil {
+		return
+	}
+	switch s := stmt.(type) {
+	case *parser.ExprStmt:
+		g.collectExprStrings(s.X)
+	case *parser.AssignStmt:
+		for _, rhs := range s.Rhs {
+			g.collectExprStrings(rhs)
+		}
+		if s.Lhs != nil {
+			for _, lhs := range s.Lhs {
+				g.collectExprStrings(lhs)
+			}
+		}
+	case *parser.DeclStmt:
+		if vd, ok := s.Decl.(*parser.VarDecl); ok && vd.Value != nil {
+			g.collectExprStrings(vd.Value)
+		}
+	case *parser.ReturnStmt:
+		for _, r := range s.Results {
+			g.collectExprStrings(r)
+		}
+	case *parser.IfStmt:
+		g.collectExprStrings(s.Cond)
+		g.collectStmtStrings(s.Body)
+		g.collectStmtStrings(s.Else)
+	case *parser.ForStmt:
+		if s.Init != nil {
+			g.collectStmtStrings(s.Init)
+		}
+		if s.Cond != nil {
+			g.collectExprStrings(s.Cond)
+		}
+		if s.Post != nil {
+			g.collectStmtStrings(s.Post)
+		}
+		g.collectStmtStrings(s.Body)
+	case *parser.BlockStmt:
+		for _, ss := range s.Stmts {
+			g.collectStmtStrings(ss)
+		}
+	case *parser.SwitchStmt:
+		if s.Tag != nil {
+			g.collectExprStrings(s.Tag)
+		}
+		g.collectStmtStrings(s.Body)
+	case *parser.BreakStmt, *parser.ContinueStmt, *parser.GotoStmt, *parser.EmptyStmt, *parser.IncDecStmt:
+		// no expressions to collect
+	}
+}
+
+func (g *Generator) collectExprStrings(expr parser.Expr) {
+	if expr == nil {
+		return
+	}
+	switch e := expr.(type) {
+	case *parser.BasicLit:
+		if e.Type == lexer.T_STRING {
+			g.emitter.newString(e.Value)
+		}
+	case *parser.BinaryExpr:
+		g.collectExprStrings(e.X)
+		g.collectExprStrings(e.Y)
+	case *parser.UnaryExpr:
+		g.collectExprStrings(e.X)
+	case *parser.CallExpr:
+		g.collectExprStrings(e.Fun)
+		for _, arg := range e.Args {
+			g.collectExprStrings(arg)
+		}
+	case *parser.CastExpr:
+		g.collectExprStrings(e.X)
+	case *parser.StarExpr:
+		g.collectExprStrings(e.X)
+	case *parser.AddrExpr:
+		g.collectExprStrings(e.X)
+	case *parser.ParenExpr:
+		g.collectExprStrings(e.X)
+	case *parser.IndexExpr:
+		g.collectExprStrings(e.X)
+		g.collectExprStrings(e.Index)
+	case *parser.SelectorExpr:
+		g.collectExprStrings(e.X)
+	}
 }

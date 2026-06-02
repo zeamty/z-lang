@@ -104,7 +104,7 @@ func (tr *TypeResolver) exprType(expr parser.Expr) types.Type {
 		case lexer.T_FLOAT:
 			return types.BasicTypes["float64"]
 		case lexer.T_STRING:
-			return types.BasicTypes["string"]
+			return &types.Pointer{Base: types.BasicTypes["byte"]}
 		case lexer.T_CHAR:
 			return types.BasicTypes["rune"]
 		}
@@ -122,6 +122,9 @@ func (tr *TypeResolver) exprType(expr parser.Expr) types.Type {
 			if pkg, ok := sel.X.(*parser.Ident); ok {
 				if pkg.Name == "unsafe" && sel.Sel.Name == "Pointer" {
 					return &types.Pointer{Base: types.BasicTypes["byte"]}
+				}
+				if pkg.Name == "unsafe" && sel.Sel.Name == "PtrToInt" {
+					return types.BasicTypes["uintptr"]
 				}
 			}
 		}

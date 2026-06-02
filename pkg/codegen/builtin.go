@@ -82,6 +82,13 @@ func (g *Generator) emitUnsafeCall(name string, args []parser.Expr) string {
 			g.emitter.emitf("%s = inttoptr i64 %s to i8*", tmp, val)
 			return tmp
 		}
+	case "PtrToInt":
+		if len(args) >= 1 {
+			val := g.emitExpr(args[0])
+			tmp := g.emitter.newTmp()
+			g.emitter.emitf("%s = ptrtoint i8* %s to i64", tmp, val)
+			return tmp
+		}
 	case "Sizeof":
 		if len(args) >= 1 {
 			typ := g.tr.exprType(args[0])

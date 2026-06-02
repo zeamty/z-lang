@@ -49,6 +49,8 @@ func (e *Emitter) newTmp() string {
 }
 
 func (e *Emitter) newString(name string) string {
+	// Strip surrounding quotes if present (parser wraps string values in quotes)
+	name = strings.Trim(name, "\"")
 	if id, ok := e.strings[name]; ok {
 		return fmt.Sprintf("@.str.%d", id)
 	}

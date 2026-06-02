@@ -1,39 +1,29 @@
 package main
 
-func vga_write_char(off uintptr, c byte) {
-    var p *byte
-    p = (*byte)(unsafe.Pointer(off))
-    *p = c
-    p = (*byte)(unsafe.Pointer(off + 1))
-    *p = 0x0F
+func putc(msg *byte) {
+    var vga uintptr
+    vga = 0xB8000
+    var addr uintptr
+    addr = unsafe.PtrToInt(msg)
+    for {
+        var p *byte
+        p = (*byte)(unsafe.Pointer(addr))
+        var c byte
+        c = *p
+        if c == 0 {
+            break
+        }
+        p = (*byte)(unsafe.Pointer(vga))
+        *p = c
+        p = (*byte)(unsafe.Pointer(vga + 1))
+        *p = 0x0F
+        vga = vga + 2
+        addr = addr + 1
+    }
 }
 
 //z:export
 func KernelMain() {
-    var off uintptr
-    off = 0xB8000
-
-    vga_write_char(off, 72)   // H
-    off = off + 2
-    vga_write_char(off, 101)  // e
-    off = off + 2
-    vga_write_char(off, 108)  // l
-    off = off + 2
-    vga_write_char(off, 108)  // l
-    off = off + 2
-    vga_write_char(off, 111)  // o
-    off = off + 2
-    vga_write_char(off, 32)   // space
-    off = off + 2
-    vga_write_char(off, 90)   // Z
-    off = off + 2
-    vga_write_char(off, 108)  // l
-    off = off + 2
-    vga_write_char(off, 97)   // a
-    off = off + 2
-    vga_write_char(off, 110)  // n
-    off = off + 2
-    vga_write_char(off, 103)  // g
-    off = off + 2
-    vga_write_char(off, 33)   // !
+    putc("Hello Zlang!")
+    asm.Instr("hlt")
 }
