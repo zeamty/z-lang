@@ -420,15 +420,65 @@ qemu-system-x86_64 -cdrom os.iso -no-reboot
 
 ## Implementation Milestones
 
-| Milestone | Deliverable | Week |
-|----------|-------------|------|
-| M1 | Lexer + Parser (AST output) | 1-2 |
-| M2 | Semantic analysis (type checking) | 3 |
-| M3 | LLVM IR generation (basic functions) | 4 |
-| M4 | Full codegen + runtime | 5 |
-| M5 | Standard library (asm, unsafe) | 6 |
-| M6 | OS demo boots to VGA output | 7 |
-| M7 | OS demo with interrupts | 8 |
+| Milestone | Deliverable | Status |
+|----------|-------------|--------|
+| M1 | Lexer + Parser (AST output) | ✅ Done |
+| M2 | Semantic analysis (type checking) | ✅ Done |
+| M3 | LLVM IR generation (basic functions) | ✅ Done |
+| M4 | Full codegen + runtime | ✅ Done |
+| M5 | Standard library (asm, unsafe, atomic, mem, errors) | ✅ Done |
+| M6 | OS demo boots to VGA output | ✅ Done (pure Z code) |
+| M7 | OS demo with interrupts | 🔜 Next |
+
+## Current Implementation Status (2026-06-02)
+
+### Lexer: Complete
+- All keywords, operators, literals (hex, octal, binary, raw strings, runes)
+- `//z:` directives recognition
+- Token types: `T_TRUE`, `T_FALSE`, `T_NIL`, `T_IOTA`, `T_UNSAFE`
+
+### Parser: Complete
+- Recursive descent parser with full expression grammar
+- AST nodes: all declarations, statements, expressions
+- `:=` short declaration, `var`/`const` blocks, `iota`
+- Named return values, labels, import blocks
+- Type cast expressions: `(*byte)(unsafe.Pointer(addr))`
+- Pointer dereference: `*ptr = value`
+- `StarExpr`/`AddrExpr`/`CastExpr` AST nodes
+
+### Semantic Analysis: Complete
+- Scope resolution (package, function, block scopes)
+- Type checking with builtin type recognition
+- Directive validation (`//z:interrupt`)
+- `DeclStmt`, `CastExpr`, `StarExpr`, `SelectorExpr` checking
+
+### Codegen: Complete
+- Emitter + TypeResolver pattern
+- LLVM IR text generation (no CGo dependency)
+- Functions, structs, globals, control flow
+- `switch`/`defer`/`goto`/labeled `break`/`continue`
+- Inline assembly with AT&T constraint mapping
+- Builtin intrinsics: `mem` (memcpy/memset), `atomic` (load/store/add/swap/cas), `unsafe` (Pointer/Sizeof/Slice)
+- Type casts (`bitcast`), pointer dereference (`load`/`store`)
+- Parameter type matching with `trunc`/`sext`
+- Local variable type tracking
+
+### Standard Library: Complete
+- `asm` — `Instr`, `Block`, `In`, `Out`, `InOut`, `Clobbers`
+- `unsafe` — `Pointer`, `Sizeof`, `Offsetof`, `Alignof`, `Slice`
+- `atomic` — `LoadInt32`, `StoreInt32`, `AddInt32`, `SwapInt32`, `CAS`
+- `mem` — `Memcpy`, `Memset`, `Memmove`
+- `errors` — `error` interface, `New`
+
+### CLI: Complete
+- Multi-file input with merging
+- Build tags: `//z:build tag` and `//z:build !tag`
+- `-emit-llvm` flag, `-o` output flag, `-tags` flag
+
+### OS Demo: Complete
+- `vga_write_char` — extracted common function for VGA character output
+- `KernelMain` — outputs "Hello Zlang!" to VGA text mode at 0xB8000
+- Pure Z code: no `asm.Instr`, uses `unsafe.Pointer` + type casts + pointer dereference
 
 ---
 

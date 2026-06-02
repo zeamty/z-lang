@@ -75,6 +75,13 @@ func (g *Generator) emitAtomicCall(name string, args []parser.Expr) string {
 
 func (g *Generator) emitUnsafeCall(name string, args []parser.Expr) string {
 	switch name {
+	case "Pointer":
+		if len(args) >= 1 {
+			val := g.emitExpr(args[0])
+			tmp := g.emitter.newTmp()
+			g.emitter.emitf("%s = inttoptr i64 %s to i8*", tmp, val)
+			return tmp
+		}
 	case "Sizeof":
 		if len(args) >= 1 {
 			typ := g.tr.exprType(args[0])

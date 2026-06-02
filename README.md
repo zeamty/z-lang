@@ -46,9 +46,14 @@ z-lang/
 │   ├── lexer/       # Lexer (tokenization)
 │   ├── parser/      # Parser (AST generation)
 │   ├── types/       # Type system
-│   ├── sema/        # Semantic analysis (TODO)
+│   ├── sema/        # Semantic analysis
 │   └── codegen/     # LLVM IR generation
-├── stdlib/          # Standard library (asm, unsafe, etc.)
+├── stdlib/          # Standard library
+│   ├── asm/         # Inline assembly intrinsics
+│   ├── unsafe/      # Unsafe operations
+│   ├── atomic/      # Atomic operations
+│   ├── mem/         # Memory intrinsics
+│   └── errors/      # Error interface
 ├── examples/        # Example programs
 │   ├── hello.z      # Basic hello world
 │   ├── arithmetic.z # Arithmetic operations
@@ -57,7 +62,7 @@ z-lang/
 │   ├── asm_demo.z   # Inline assembly
 │   └── os/          # Bootable OS demo
 │       ├── boot.asm # Multiboot entry
-│       ├── main.z   # Kernel main
+│       ├── main.z   # Kernel main (VGA Hello Zlang!)
 │       └── linker.ld # Linker script
 ├── LANGUAGE_SPEC.md # Language specification
 ├── IMPLEMENTATION_PLAN.md # Implementation roadmap
@@ -90,6 +95,26 @@ func KernelMain() {
 ```z
 var x int32 = 42
 var y int32      // zero value: 0
+x := 42          // short declaration
+```
+
+### Constants
+
+```z
+const MAX = 100
+const (
+    A = iota  // 0
+    B         // 1
+    C         // 2
+)
+```
+
+### Pointers & Casts
+
+```z
+var p *byte
+p = (*byte)(unsafe.Pointer(0xB8000))
+*p = 72  // write to memory
 ```
 
 ### Control Flow
@@ -114,6 +139,16 @@ for x < 10 {
 
 // C-style
 for i := 0; i < 10; i = i + 1 {
+    // ...
+}
+
+// Switch
+switch x {
+case 1:
+    // ...
+case 2:
+    // ...
+default:
     // ...
 }
 ```
@@ -166,18 +201,20 @@ type Header struct {
 
 ## Current Status
 
-**MVP Complete**:
-- Lexer: 90%
-- Parser: 85%
-- Codegen: 70%
-- OS Demo: Working
+**P0-P3 Features Complete**:
+- Lexer: keywords, operators, literals, directives, identifiers
+- Parser: full expression/statement grammar, :=, var/const blocks, iota, named returns, labels, import blocks, type casts, pointer dereference
+- Semantic Analysis: scope resolution, type checking, directive validation, builtin type recognition
+- Codegen: Emitter + TypeResolver, functions, control flow (if/for/switch/defer/goto), structs, pointers, type casts, inline assembly, builtin intrinsics
+- Standard Library: asm, unsafe, atomic, mem, errors packages
+- CLI: multi-file input, build tags (`//z:build`), `-emit-llvm` flag
+- OS Demo: VGA text output via pure Z code (no `asm.Instr`)
 
-**TODO**:
-- Semantic analysis (type checking)
-- Better error messages
-- Optimization passes
-- Standard library implementation
-- Full interrupt support
+**In Progress**:
+- String support improvements
+- Array/slice runtime support
+- Full OS demo with interrupts (GDT, IDT, paging)
+- Better error messages with source locations
 
 ## License
 

@@ -13,6 +13,8 @@ type TypeResolver struct {
 	vars      map[string]*parser.VarDecl
 	functions map[string]*parser.FuncDecl
 	structs   map[string]*types.Struct
+	currentFn *parser.FuncDecl
+	locals    map[string]types.Type
 }
 
 func newTypeResolver(
@@ -81,6 +83,18 @@ func (tr *TypeResolver) exprType(expr parser.Expr) types.Type {
 		if v, ok := tr.vars[e.Name]; ok {
 			return tr.resolveType(v.Type)
 		}
+		// Check local variables
+		if t, ok := tr.locals[e.Name]; ok {
+			return t
+		}
+		// Check function parameters
+		if tr.currentFn != nil {
+			for _, p := range tr.currentFn.Type.Params {
+				if p.Name.Name == e.Name {
+					return tr.resolveType(p.Type)
+				}
+			}
+		}
 		return types.BasicTypes["int64"]
 
 	case *parser.BasicLit:
@@ -103,6 +117,14 @@ func (tr *TypeResolver) exprType(expr parser.Expr) types.Type {
 		return tr.exprType(e.X)
 
 	case *parser.CallExpr:
+		// Handle unsafe.Pointer(x) -> i8*
+		if sel, ok := e.Fun.(*parser.SelectorExpr); ok {
+			if pkg, ok := sel.X.(*parser.Ident); ok {
+				if pkg.Name == "unsafe" && sel.Sel.Name == "Pointer" {
+					return &types.Pointer{Base: types.BasicTypes["byte"]}
+				}
+			}
+		}
 		if ident, ok := e.Fun.(*parser.Ident); ok {
 			if fn := tr.functions[ident.Name]; fn != nil {
 				if len(fn.Type.Results) > 0 {
@@ -110,6 +132,25 @@ func (tr *TypeResolver) exprType(expr parser.Expr) types.Type {
 				}
 			}
 		}
+
+	case *parser.CastExpr:
+		return tr.resolveType(e.Type)
+
+	case *parser.SelectorExpr:
+		// Handle unsafe.Pointer type reference
+		if pkg, ok := e.X.(*parser.Ident); ok {
+			if pkg.Name == "unsafe" && e.Sel.Name == "Pointer" {
+				return &types.Pointer{Base: types.BasicTypes["byte"]}
+			}
+		}
+		return types.BasicTypes["int64"]
+
+	case *parser.StarExpr:
+		base := tr.exprType(e.X)
+		if p, ok := base.(*types.Pointer); ok {
+			return p.Base
+		}
+		return types.BasicTypes["int64"]
 	}
 
 	return types.BasicTypes["int64"]

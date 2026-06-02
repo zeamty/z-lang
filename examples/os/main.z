@@ -1,20 +1,39 @@
 package main
 
+func vga_write_char(off uintptr, c byte) {
+    var p *byte
+    p = (*byte)(unsafe.Pointer(off))
+    *p = c
+    p = (*byte)(unsafe.Pointer(off + 1))
+    *p = 0x0F
+}
+
 //z:export
 func KernelMain() {
-    // Write "Z OS" to VGA at 0xB8000 using AT&T syntax
-    asm.Instr("movl $0xB8000, %eax")
-    asm.Instr("movb $90, (%eax)")
-    asm.Instr("movb $15, 1(%eax)")
-    asm.Instr("movb $32, 2(%eax)")
-    asm.Instr("movb $15, 3(%eax)")
-    asm.Instr("movb $79, 4(%eax)")
-    asm.Instr("movb $15, 5(%eax)")
-    asm.Instr("movb $83, 6(%eax)")
-    asm.Instr("movb $15, 7(%eax)")
+    var off uintptr
+    off = 0xB8000
 
-    // Halt
-    for {
-        asm.Instr("hlt")
-    }
+    vga_write_char(off, 72)   // H
+    off = off + 2
+    vga_write_char(off, 101)  // e
+    off = off + 2
+    vga_write_char(off, 108)  // l
+    off = off + 2
+    vga_write_char(off, 108)  // l
+    off = off + 2
+    vga_write_char(off, 111)  // o
+    off = off + 2
+    vga_write_char(off, 32)   // space
+    off = off + 2
+    vga_write_char(off, 90)   // Z
+    off = off + 2
+    vga_write_char(off, 108)  // l
+    off = off + 2
+    vga_write_char(off, 97)   // a
+    off = off + 2
+    vga_write_char(off, 110)  // n
+    off = off + 2
+    vga_write_char(off, 103)  // g
+    off = off + 2
+    vga_write_char(off, 33)   // !
 }

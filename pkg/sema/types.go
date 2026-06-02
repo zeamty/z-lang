@@ -46,6 +46,10 @@ func (tc *TypeChecker) CollectDecls(decls []parser.Decl) {
 func (tc *TypeChecker) CheckExpr(expr parser.Expr) parser.Type {
 	switch e := expr.(type) {
 	case *parser.Ident:
+		// Check built-in types first
+		if isBuiltinType(e.Name) {
+			return &parser.Ident{Name: e.Name}
+		}
 		sym := tc.scope.Lookup(e.Name)
 		if sym == nil {
 			tc.errors.Errorf(0, 0, "undefined identifier '%s'", e.Name)
@@ -85,6 +89,24 @@ func (tc *TypeChecker) CheckExpr(expr parser.Expr) parser.Type {
 				}
 			}
 		}
+
+	case *parser.SelectorExpr:
+		return tc.CheckExpr(e.X)
+
+	case *parser.ParenExpr:
+		return tc.CheckExpr(e.X)
+
+	case *parser.StarExpr:
+		base := tc.CheckExpr(e.X)
+		if base != nil {
+			if pt, ok := base.(*parser.PointerType); ok {
+				return pt.Base
+			}
+		}
+		return nil
+
+	case *parser.CastExpr:
+		return e.Type
 	}
 
 	return nil
@@ -132,6 +154,13 @@ func (tc *TypeChecker) CheckStmt(stmt parser.Stmt) {
 		tc.CheckStmt(s.Body)
 	case *parser.LabeledStmt:
 		tc.CheckStmt(s.Stmt)
+	case *parser.DeclStmt:
+		if vd, ok := s.Decl.(*parser.VarDecl); ok {
+			tc.scope.Define(vd.Name.Name, SymVar, vd, vd.Type, 0)
+			if vd.Value != nil {
+				tc.CheckExpr(vd.Value)
+			}
+		}
 	}
 }
 
@@ -143,4 +172,14 @@ func (tc *TypeChecker) popScope() {
 	if tc.scope.Parent != nil {
 		tc.scope = tc.scope.Parent
 	}
+}
+
+func isBuiltinType(name string) bool {
+	switch name {
+	case "bool", "int8", "int16", "int32", "int64", "int",
+		"uint8", "uint16", "uint32", "uint64", "uint", "uintptr",
+		"float32", "float64", "string", "rune", "byte":
+		return true
+	}
+	return false
 }

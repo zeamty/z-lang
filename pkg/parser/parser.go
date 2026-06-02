@@ -623,12 +623,32 @@ func (p *Parser) parseExpr() Expr {
 func (p *Parser) parseBinaryExpr(minPrec int) Expr {
 	x := p.parseUnaryExpr()
 
+	// Check for type cast: (type)(expr)
+	castDone := false
+	if p.tok.Type == lexer.T_LPAREN {
+		if pe, ok := x.(*ParenExpr); ok {
+			if t := p.exprToType(pe.X); t != nil {
+				p.nextTok() // skip (
+				arg := p.parseExpr()
+				p.expect(lexer.T_RPAREN)
+				x = &CastExpr{X: arg, Type: t}
+				castDone = true
+			}
+		}
+	}
+
 	loopCount := 0
 	for {
 		loopCount++
 		if loopCount > 100 {
 			p.error("parseBinaryExpr infinite loop")
 			return x
+		}
+
+		// After a cast, stop to avoid consuming * as binary operator
+		// on the next statement (e.g. (*byte)(x)\n*p = 72)
+		if castDone {
+			break
 		}
 
 		op := p.tok.Type
@@ -646,7 +666,13 @@ func (p *Parser) parseBinaryExpr(minPrec int) Expr {
 
 func (p *Parser) parseUnaryExpr() Expr {
 	switch p.tok.Type {
-	case lexer.T_PLUS, lexer.T_MINUS, lexer.T_NOT, lexer.T_STAR, lexer.T_AND:
+	case lexer.T_STAR:
+		p.nextTok()
+		return &StarExpr{X: p.parseUnaryExpr()}
+	case lexer.T_AND:
+		p.nextTok()
+		return &AddrExpr{X: p.parseUnaryExpr()}
+	case lexer.T_PLUS, lexer.T_MINUS, lexer.T_NOT:
 		op := p.tok.Type
 		p.nextTok()
 		return &UnaryExpr{X: p.parseUnaryExpr(), Op: op}
@@ -668,6 +694,18 @@ func (p *Parser) parsePrimaryExpr() Expr {
 
 	for {
 		switch p.tok.Type {
+		case lexer.T_LPAREN:
+			// Check if x is a type in parens -> type cast
+			if pe, ok := x.(*ParenExpr); ok {
+				if t := p.exprToType(pe.X); t != nil {
+					p.nextTok() // skip (
+					arg := p.parseExpr()
+					p.expect(lexer.T_RPAREN)
+					x = &CastExpr{X: arg, Type: t}
+					continue
+				}
+			}
+			x = p.parseCallExprWithFun(x)
 		case lexer.T_DOT:
 			p.nextTok()
 			x = &SelectorExpr{X: x, Sel: p.parseIdent()}
@@ -676,8 +714,6 @@ func (p *Parser) parsePrimaryExpr() Expr {
 			idx := p.parseExpr()
 			p.expect(lexer.T_RBRACK)
 			x = &IndexExpr{X: x, Index: idx}
-		case lexer.T_LPAREN:
-			x = p.parseCallExprWithFun(x)
 		default:
 			return x
 		}
@@ -702,6 +738,11 @@ func (p *Parser) parseOperand() Expr {
 		lit := &BasicLit{Type: lexer.T_INT, Value: fmt.Sprintf("%d", p.iotaValue)}
 		p.nextTok()
 		return lit
+	case lexer.T_UNSAFE:
+		// "unsafe" is a keyword but used as identifier in expressions
+		tok := p.tok
+		p.nextTok()
+		return &Ident{Name: tok.Literal}
 	case lexer.T_IDENT:
 		return p.parseIdent()
 	case lexer.T_INT:
@@ -796,4 +837,22 @@ func precedence(op lexer.TokenType) int {
 
 func strconvQuote(s string) string {
 	return "\"" + s + "\""
+}
+
+// exprToType converts an expression to a Type if it looks like a type expression.
+// Returns nil if the expression cannot be interpreted as a type.
+func (p *Parser) exprToType(x Expr) Type {
+	switch e := x.(type) {
+	case *Ident:
+		return e
+	case *StarExpr:
+		base := p.exprToType(e.X)
+		if base == nil {
+			return nil
+		}
+		return &PointerType{Base: base}
+	case *ParenExpr:
+		return p.exprToType(e.X)
+	}
+	return nil
 }

@@ -138,6 +138,8 @@ func (g *Generator) emitGlobalVar(name string, v *parser.VarDecl) {
 
 func (g *Generator) emitFunction(fn *parser.FuncDecl) {
 	g.currentFn = fn
+	g.tr.currentFn = fn
+	g.tr.locals = make(map[string]types.Type)
 	g.deferList = nil
 	g.loopLabels = make(map[string]string)
 	g.loopEnds = make(map[string]string)
@@ -212,6 +214,9 @@ func (g *Generator) emitFunction(fn *parser.FuncDecl) {
 func (g *Generator) emitExpr(expr parser.Expr) string {
 	switch e := expr.(type) {
 	case *parser.Ident:
+		if g.isParam(e.Name) {
+			return "%" + e.Name
+		}
 		typ := g.tr.exprType(expr)
 		tmp := g.emitter.newTmp()
 		g.emitter.emitf("%s = load %s, %s* %%v.%s", tmp, typ.LLVMType(), typ.LLVMType(), e.Name)
@@ -261,6 +266,21 @@ func (g *Generator) emitExpr(expr parser.Expr) string {
 	case *parser.ParenExpr:
 		return g.emitExpr(e.X)
 
+	case *parser.CastExpr:
+		val := g.emitExpr(e.X)
+		srcType := g.tr.exprType(e.X)
+		dstType := g.tr.resolveType(e.Type)
+		tmp := g.emitter.newTmp()
+		g.emitter.emitf("%s = bitcast %s %s to %s", tmp, srcType.LLVMType(), val, dstType.LLVMType())
+		return tmp
+
+	case *parser.StarExpr:
+		ptr := g.emitExpr(e.X)
+		typ := g.tr.exprType(e)
+		tmp := g.emitter.newTmp()
+		g.emitter.emitf("%s = load %s, %s* %s", tmp, typ.LLVMType(), typ.LLVMType(), ptr)
+		return tmp
+
 	default:
 		return "0"
 	}
@@ -302,6 +322,20 @@ func (g *Generator) emitCall(call *parser.CallExpr) string {
 		}
 		val := g.emitExpr(arg)
 		typ := g.tr.exprType(arg)
+		// Truncate/extend to match parameter type if needed
+		if i < len(fn.Type.Params) {
+			paramType := g.tr.resolveType(fn.Type.Params[i].Type)
+			if typ.LLVMType() != paramType.LLVMType() {
+				tmp := g.emitter.newTmp()
+				if paramType.Size() < typ.Size() {
+					g.emitter.emitf("%s = trunc %s %s to %s", tmp, typ.LLVMType(), val, paramType.LLVMType())
+				} else {
+					g.emitter.emitf("%s = sext %s %s to %s", tmp, typ.LLVMType(), val, paramType.LLVMType())
+				}
+				val = tmp
+			}
+			typ = paramType
+		}
 		args += typ.LLVMType() + " " + val
 	}
 
@@ -404,6 +438,7 @@ func (g *Generator) emitStmt(stmt parser.Stmt) {
 			if g.hasDirectiveAttr(vd.Directive, "volatile") {
 				volatileStr = " volatile"
 			}
+			g.tr.locals[vd.Name.Name] = typ
 			g.emitter.emitf("%%v.%s = alloca %s", vd.Name.Name, typ.LLVMType())
 			if vd.Value != nil {
 				val := g.emitExpr(vd.Value)
@@ -419,6 +454,7 @@ func (g *Generator) emitStmt(stmt parser.Stmt) {
 				typ := g.tr.exprType(s.Rhs[i])
 
 				if s.Tok == lexer.T_COLON_ASSIGN {
+					g.tr.locals[ident.Name] = typ
 					g.emitter.emitf("%%v.%s = alloca %s", ident.Name, typ.LLVMType())
 				}
 
@@ -430,6 +466,22 @@ func (g *Generator) emitStmt(stmt parser.Stmt) {
 				}
 				g.emitter.emitf("store%s %s %s, %s* %%v.%s",
 					volatileStr, typ.LLVMType(), rhs, typ.LLVMType(), ident.Name)
+			} else if se, ok := lhs.(*parser.StarExpr); ok {
+				rhs := g.emitExpr(s.Rhs[i])
+				ptr := g.emitExpr(se.X)
+				ptrType := g.tr.exprType(se.X)
+				baseType := ptrType
+				if p, ok := ptrType.(*types.Pointer); ok {
+					baseType = p.Base
+				}
+				rhsType := g.tr.exprType(s.Rhs[i])
+				if rhsType.LLVMType() != baseType.LLVMType() {
+					tmp := g.emitter.newTmp()
+					g.emitter.emitf("%s = trunc %s %s to %s", tmp, rhsType.LLVMType(), rhs, baseType.LLVMType())
+					rhs = tmp
+				}
+				g.emitter.emitf("store %s %s, %s* %s",
+					baseType.LLVMType(), rhs, baseType.LLVMType(), ptr)
 			}
 		}
 
@@ -680,4 +732,16 @@ func (g *Generator) parseAlignAttr(directive string) int {
 		}
 	}
 	return 0
+}
+
+func (g *Generator) isParam(name string) bool {
+	if g.currentFn == nil {
+		return false
+	}
+	for _, p := range g.currentFn.Type.Params {
+		if p.Name.Name == name {
+			return true
+		}
+	}
+	return false
 }

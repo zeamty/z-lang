@@ -38,6 +38,7 @@ func (a *Analyzer) Analyze(file *parser.File) *ErrorCollector {
 func (a *Analyzer) analyzeFunc(fn *parser.FuncDecl) {
 	funcScope := NewScope(ScopeFunc, a.scope)
 	a.scope = funcScope
+	a.checker.scope = funcScope
 
 	for _, p := range fn.Type.Params {
 		a.scope.Define(p.Name.Name, SymParam, fn, p.Type, 0)
@@ -57,6 +58,7 @@ func (a *Analyzer) analyzeFunc(fn *parser.FuncDecl) {
 
 	a.validateDirectives(fn)
 	a.scope = a.scope.Parent
+	a.checker.scope = a.scope
 }
 
 func (a *Analyzer) analyzeTypeDecl(td *parser.TypeDecl) {
