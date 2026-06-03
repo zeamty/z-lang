@@ -115,6 +115,27 @@ const (
 var p *byte
 p = (*byte)(unsafe.Pointer(0xB8000))
 *p = 72  // write to memory
+
+// Address-of operator
+var x int
+var ptr *int
+ptr = &x  // take address of x
+```
+
+### Arrays & Slices
+
+```z
+var arr [5]int
+arr[0] = 10  // array indexing
+
+// Slice expression
+var sl []int
+sl = arr[1:4]  // slice from index 1 to 4
+
+// Range loop
+for i, v := range arr {
+    // i is index, v is element value
+}
 ```
 
 ### Control Flow
@@ -203,16 +224,17 @@ type Header struct {
 
 **P0-P3 Features Complete**:
 - Lexer: keywords, operators, literals, directives, identifiers
-- Parser: full expression/statement grammar, :=, var/const blocks, iota, named returns, labels, import blocks, type casts, pointer dereference
+- Parser: full expression/statement grammar, :=, var/const blocks, iota, named returns, labels, import blocks, type casts, pointer dereference, address-of (`&x`), slice expressions (`arr[low:high]`)
 - Semantic Analysis: scope resolution, type checking, directive validation, builtin type recognition
 - Codegen: Emitter + TypeResolver, functions, control flow (if/for/switch/defer/goto), structs, pointers, type casts, inline assembly, builtin intrinsics
+- **New**: `AddrExpr` (`&x`), `SliceExpr` (`arr[low:high]`), `ForRangeStmt` (`for i, v := range arr`), array indexing LHS (`arr[i] = value`), CompositeLit basic impl
 - Standard Library: asm, unsafe, atomic, mem, errors packages
 - CLI: multi-file input, build tags (`//z:build`), `-emit-llvm` flag
 - OS Demo: VGA text output via pure Z code (no `asm.Instr`)
 
 **In Progress**:
-- String support improvements
-- Array/slice runtime support
+- Struct field access codegen
+- Full CompositeLit (keyed struct literals)
 - Full OS demo with interrupts (GDT, IDT, paging)
 - Better error messages with source locations
 

@@ -430,7 +430,7 @@ qemu-system-x86_64 -cdrom os.iso -no-reboot
 | M6 | OS demo boots to VGA output | ✅ Done (pure Z code) |
 | M7 | OS demo with interrupts | 🔜 Next |
 
-## Current Implementation Status (2026-06-02)
+## Current Implementation Status (2026-06-03)
 
 ### Lexer: Complete
 - All keywords, operators, literals (hex, octal, binary, raw strings, runes)
@@ -444,13 +444,17 @@ qemu-system-x86_64 -cdrom os.iso -no-reboot
 - Named return values, labels, import blocks
 - Type cast expressions: `(*byte)(unsafe.Pointer(addr))`
 - Pointer dereference: `*ptr = value`
-- `StarExpr`/`AddrExpr`/`CastExpr` AST nodes
+- Address-of: `&x` (AddrExpr)
+- Slice expression: `arr[low:high]` (SliceExpr)
+- `StarExpr`/`AddrExpr`/`CastExpr`/`SliceExpr` AST nodes
+- For-range: `for key, value := range expr`
 
 ### Semantic Analysis: Complete
 - Scope resolution (package, function, block scopes)
 - Type checking with builtin type recognition
 - Directive validation (`//z:interrupt`)
-- `DeclStmt`, `CastExpr`, `StarExpr`, `SelectorExpr` checking
+- `DeclStmt`, `CastExpr`, `StarExpr`, `SelectorExpr`, `AddrExpr`, `SliceExpr` checking
+- For-range scope binding (key/value variables)
 
 ### Codegen: Complete
 - Emitter + TypeResolver pattern
@@ -458,10 +462,16 @@ qemu-system-x86_64 -cdrom os.iso -no-reboot
 - Functions, structs, globals, control flow
 - `switch`/`defer`/`goto`/labeled `break`/`continue`
 - Inline assembly with AT&T constraint mapping
-- Builtin intrinsics: `mem` (memcpy/memset), `atomic` (load/store/add/swap/cas), `unsafe` (Pointer/Sizeof/Slice)
+- Builtin intrinsics: `mem` (memcpy/memset), `atomic` (load/store/add/swap/cas), `unsafe` (Pointer/Sizeof/Slice/PtrToInt)
 - Type casts (`bitcast`), pointer dereference (`load`/`store`)
 - Parameter type matching with `trunc`/`sext`
 - Local variable type tracking
+- **New P0 Features**:
+  - `AddrExpr`: address-of `&x` returns pointer
+  - `SliceExpr`: `arr[low:high]` returns slice struct `{ptr, len}`
+  - `ForRangeStmt`: proper iteration with counter, bounds check, key/value binding
+  - `IndexExpr LHS`: `arr[i] = value` array element assignment
+  - `CompositeLit`: basic array/struct literal initialization
 
 ### Standard Library: Complete
 - `asm` — `Instr`, `Block`, `In`, `Out`, `InOut`, `Clobbers`
