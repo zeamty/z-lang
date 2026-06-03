@@ -105,6 +105,26 @@ func (tc *TypeChecker) CheckExpr(expr parser.Expr) parser.Type {
 		}
 		return nil
 
+	case *parser.AddrExpr:
+		// &x returns a pointer to x's type
+		base := tc.CheckExpr(e.X)
+		if base != nil {
+			return &parser.PointerType{Base: base}
+		}
+		return nil
+
+	case *parser.SliceExpr:
+		// arr[low:high] returns a slice of the array's element type
+		base := tc.CheckExpr(e.X)
+		if arr, ok := base.(*parser.ArrayType); ok {
+			return &parser.SliceType{Elt: arr.Elt}
+		}
+		// If base is already a slice, return slice type
+		if sl, ok := base.(*parser.SliceType); ok {
+			return sl
+		}
+		return nil
+
 	case *parser.CastExpr:
 		return e.Type
 	}

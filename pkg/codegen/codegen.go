@@ -264,15 +264,69 @@ func (g *Generator) emitExpr(expr parser.Expr) string {
 		return g.emitExpr(e.X) + "." + e.Sel.Name
 
 	case *parser.IndexExpr:
-		base := g.emitExpr(e.X)
+		// For local arrays, use the alloca pointer directly
+		var base string
+		if ident, ok := e.X.(*parser.Ident); ok {
+			base = "%v." + ident.Name
+		} else {
+			base = g.emitExpr(e.X)
+		}
 		idx := g.emitExpr(e.Index)
-		typ := g.tr.exprType(e.X)
-		tmp := g.emitter.newTmp()
-		g.emitter.emitf("%s = getelementptr %s, %s* %s, i64 %s", tmp, typ.LLVMType(), typ.LLVMType(), base, idx)
-		return tmp
+		arrType := g.tr.exprType(e.X)
+		eltType := arrType
+		if arr, ok := arrType.(*types.Array); ok {
+			eltType = arr.Elt
+		}
+		ptrTmp := g.emitter.newTmp()
+		g.emitter.emitf("%s = getelementptr %s, %s* %s, i64 0, i64 %s", ptrTmp, arrType.LLVMType(), arrType.LLVMType(), base, idx)
+		// Load the element value
+		valTmp := g.emitter.newTmp()
+		g.emitter.emitf("%s = load %s, %s* %s", valTmp, eltType.LLVMType(), eltType.LLVMType(), ptrTmp)
+		return valTmp
 
 	case *parser.CompositeLit:
-		return "undef"
+		// Array or struct literal initialization
+		if e.Type != nil {
+			typ := g.tr.resolveType(e.Type)
+			// Handle array type
+			if arr, ok := typ.(*types.Array); ok {
+				// Allocate array on stack
+				tmp := g.emitter.newTmp()
+				g.emitter.emitf("%s = alloca %s", tmp, arr.LLVMType())
+				// Initialize each element
+				for i, elt := range e.Elts {
+					eltTmp := g.emitter.newTmp()
+					g.emitter.emitf("%s = getelementptr %s, %s* %s, i64 0, i64 %d", eltTmp, arr.LLVMType(), arr.LLVMType(), tmp, i)
+					val := g.emitExpr(elt)
+					g.emitter.emitf("store %s %s, %s* %s", arr.Elt.LLVMType(), val, arr.Elt.LLVMType(), eltTmp)
+				}
+				return tmp
+			}
+			// Handle struct type
+			if st, ok := typ.(*types.Struct); ok {
+				// Allocate struct on stack
+				tmp := g.emitter.newTmp()
+				g.emitter.emitf("%s = alloca %s", tmp, st.LLVMType())
+				// Initialize each field
+				for i, elt := range e.Elts {
+					fieldTmp := g.emitter.newTmp()
+					g.emitter.emitf("%s = getelementptr %s, %s* %s, i64 0, i32 %d", fieldTmp, st.LLVMType(), st.LLVMType(), tmp, i)
+					val := g.emitExpr(elt)
+					if i < len(st.Fields) {
+						g.emitter.emitf("store %s %s, %s* %s", st.Fields[i].Type.LLVMType(), val, st.Fields[i].Type.LLVMType(), fieldTmp)
+					}
+				}
+				return tmp
+			}
+		}
+		// Fallback: allocate unnamed struct
+		tmp := g.emitter.newTmp()
+		g.emitter.emitf("%s = alloca i64", tmp)
+		if len(e.Elts) > 0 {
+			val := g.emitExpr(e.Elts[0])
+			g.emitter.emitf("store i64 %s, i64* %s", val, tmp)
+		}
+		return tmp
 
 	case *parser.ParenExpr:
 		return g.emitExpr(e.X)
@@ -291,6 +345,86 @@ func (g *Generator) emitExpr(expr parser.Expr) string {
 		tmp := g.emitter.newTmp()
 		g.emitter.emitf("%s = load %s, %s* %s", tmp, typ.LLVMType(), typ.LLVMType(), ptr)
 		return tmp
+	case *parser.AddrExpr:
+		// Address-of operation: &x returns pointer to x
+		switch x := e.X.(type) {
+		case *parser.Ident:
+			// For local variables, the alloca result is already a pointer
+			return "%v." + x.Name
+		case *parser.StarExpr:
+			// &*p just returns p (the pointer itself)
+			return g.emitExpr(x.X)
+		default:
+			// For other expressions, need to store to temp and return address
+			val := g.emitExpr(x)
+			typ := g.tr.exprType(x)
+			tmp := g.emitter.newTmp()
+			g.emitter.emitf("%s = alloca %s", tmp, typ.LLVMType())
+			g.emitter.emitf("store %s %s, %s* %s", typ.LLVMType(), val, typ.LLVMType(), tmp)
+			return tmp
+		}
+
+	case *parser.SliceExpr:
+		// Slice expression: arr[low:high] returns a slice
+		// For local arrays, use the alloca pointer directly
+		var base string
+		if ident, ok := e.X.(*parser.Ident); ok {
+			base = "%v." + ident.Name
+		} else {
+			base = g.emitExpr(e.X)
+		}
+		baseType := g.tr.exprType(e.X)
+		var lowVal, highVal int64
+		var lowReg string = "0"
+		if e.Low != nil {
+			lowReg = g.emitExpr(e.Low)
+			if lit, ok := e.Low.(*parser.BasicLit); ok {
+				lowVal = types.ParseInt(lit.Value)
+			} else {
+				lowVal = 0
+			}
+		} else {
+			lowVal = 0
+		}
+		if e.High != nil {
+			_ = g.emitExpr(e.High)
+			if lit, ok := e.High.(*parser.BasicLit); ok {
+				highVal = types.ParseInt(lit.Value)
+			} else {
+				highVal = 0
+			}
+		} else {
+			// Default high is array length
+			if arrTyp, ok := baseType.(*types.Array); ok {
+				highVal = int64(arrTyp.Len)
+			} else {
+				highVal = 0
+			}
+		}
+		// Compute slice length
+		sliceLen := highVal - lowVal
+		// Compute pointer to first element
+		eltType := baseType
+		if arrTyp, ok := baseType.(*types.Array); ok {
+			eltType = arrTyp.Elt
+		}
+		ptrTmp := g.emitter.newTmp()
+		g.emitter.emitf("%s = getelementptr %s, %s* %s, i64 %s", ptrTmp, baseType.LLVMType(), baseType.LLVMType(), base, lowReg)
+		// Allocate slice struct {ptr, len}
+		sliceTmp := g.emitter.newTmp()
+		g.emitter.emitf("%s = alloca {%s*, i64}", sliceTmp, eltType.LLVMType())
+		// Store pointer
+		ptrFieldTmp := g.emitter.newTmp()
+		g.emitter.emitf("%s = getelementptr {%s*, i64}, {%s*, i64}* %s, i32 0, i32 0", ptrFieldTmp, eltType.LLVMType(), eltType.LLVMType(), sliceTmp)
+		g.emitter.emitf("store %s* %s, %s** %s", eltType.LLVMType(), ptrTmp, eltType.LLVMType(), ptrFieldTmp)
+		// Store length
+		lenFieldTmp := g.emitter.newTmp()
+		g.emitter.emitf("%s = getelementptr {%s*, i64}, {%s*, i64}* %s, i32 0, i32 1", lenFieldTmp, eltType.LLVMType(), eltType.LLVMType(), sliceTmp)
+		g.emitter.emitf("store i64 %d, i64* %s", sliceLen, lenFieldTmp)
+		// Return the slice struct value
+		retTmp := g.emitter.newTmp()
+		g.emitter.emitf("%s = load {%s*, i64}, {%s*, i64}* %s", retTmp, eltType.LLVMType(), eltType.LLVMType(), sliceTmp)
+		return retTmp
 
 	default:
 		return "0"
@@ -493,6 +627,31 @@ func (g *Generator) emitStmt(stmt parser.Stmt) {
 				}
 				g.emitter.emitf("store %s %s, %s* %s",
 					baseType.LLVMType(), rhs, baseType.LLVMType(), ptr)
+			} else if ie, ok := lhs.(*parser.IndexExpr); ok {
+				// arr[i] = value: compute pointer and store
+				rhs := g.emitExpr(s.Rhs[i])
+				// Get base pointer
+				var base string
+				if ident, ok := ie.X.(*parser.Ident); ok {
+					base = "%v." + ident.Name
+				} else {
+					base = g.emitExpr(ie.X)
+				}
+				idx := g.emitExpr(ie.Index)
+				arrType := g.tr.exprType(ie.X)
+				eltType := arrType
+				if arr, ok := arrType.(*types.Array); ok {
+					eltType = arr.Elt
+				}
+				ptrTmp := g.emitter.newTmp()
+				g.emitter.emitf("%s = getelementptr %s, %s* %s, i64 0, i64 %s", ptrTmp, arrType.LLVMType(), arrType.LLVMType(), base, idx)
+				rhsType := g.tr.exprType(s.Rhs[i])
+				if rhsType.LLVMType() != eltType.LLVMType() {
+					tmp := g.emitter.newTmp()
+					g.emitter.emitf("%s = trunc %s %s to %s", tmp, rhsType.LLVMType(), rhs, eltType.LLVMType())
+					rhs = tmp
+				}
+				g.emitter.emitf("store %s %s, %s* %s", eltType.LLVMType(), rhs, eltType.LLVMType(), ptrTmp)
 			}
 		}
 
@@ -625,16 +784,133 @@ func (g *Generator) emitForStmt(s *parser.ForStmt) {
 }
 
 func (g *Generator) emitForRangeStmt(s *parser.ForRangeStmt) {
+	// For range loop: for key, value := range expr { body }
+	// 1. Get the expression (array/slice pointer)
+	// 2. Get length
+	// 3. Loop with counter, bind key/value each iteration
+
+	lCond := g.emitter.newLabel()
 	lBody := g.emitter.newLabel()
+	lInc := g.emitter.newLabel()
 	lEnd := g.emitter.newLabel()
 	g.loopEnds[""] = lEnd
-	g.loopContinues[""] = lBody
+	g.loopContinues[""] = lInc
 
-	g.emitExpr(s.X)
-	g.emitter.emitf("br label %%%s", lBody)
+	// Get base pointer - for local arrays, use the alloca address directly
+	basePtr := ""
+	baseType := g.tr.exprType(s.X)
+	if ident, ok := s.X.(*parser.Ident); ok {
+		// For local variables, the alloca is already a pointer to the array
+		basePtr = "%v." + ident.Name
+	} else {
+		basePtr = g.emitExpr(s.X)
+	}
+
+	var eltType types.Type
+	var arrLen int
+	var lenPtr string = ""
+
+	// Determine element type and length
+	if arrTyp, ok := baseType.(*types.Array); ok {
+		eltType = arrTyp.Elt
+		arrLen = arrTyp.Len
+	} else if sl, ok := baseType.(*types.Slice); ok {
+		eltType = sl.Elt
+		// For slices, we need to load the length from slice struct
+		// slice struct is {ptr, len}, at index 1
+		lenPtrTmp := g.emitter.newTmp()
+		g.emitter.emitf("%s = getelementptr {%s*, i64}, {%s*, i64}* %s, i64 0, i32 1", lenPtrTmp, eltType.LLVMType(), eltType.LLVMType(), basePtr)
+		lenValTmp := g.emitter.newTmp()
+		g.emitter.emitf("%s = load i64, i64* %s", lenValTmp, lenPtrTmp)
+		lenPtr = lenValTmp
+		// Also get the actual data pointer
+		dataPtrTmp := g.emitter.newTmp()
+		g.emitter.emitf("%s = getelementptr {%s*, i64}, {%s*, i64}* %s, i64 0, i32 0", dataPtrTmp, eltType.LLVMType(), eltType.LLVMType(), basePtr)
+		dataValTmp := g.emitter.newTmp()
+		g.emitter.emitf("%s = load %s*, %s** %s", dataValTmp, eltType.LLVMType(), eltType.LLVMType(), dataPtrTmp)
+		basePtr = dataValTmp
+		arrLen = 0 // dynamic length, use lenPtr
+	} else {
+		// Default: treat as single element
+		eltType = baseType
+		arrLen = 1
+	}
+
+	// Allocate counter (index) variable
+	idxTmp := g.emitter.newTmp()
+	g.emitter.emitf("%s = alloca i64", idxTmp)
+	g.emitter.emitf("store i64 0, i64* %s", idxTmp)
+
+	// Allocate key variable (if needed)
+	if s.Key != nil {
+		g.tr.locals[s.Key.Name] = types.BasicTypes["int"]
+		keyTmp := g.emitter.newTmp()
+		g.emitter.emitf("%s = alloca i64", keyTmp)
+	}
+
+	// Allocate value variable (if needed)
+	if s.Value != nil {
+		g.tr.locals[s.Value.Name] = eltType
+		valTmp := g.emitter.newTmp()
+		g.emitter.emitf("%s = alloca %s", valTmp, eltType.LLVMType())
+	}
+
+	// Jump to condition
+	g.emitter.emitf("br label %%%s", lCond)
+	g.emitter.emitRawf("%s:", lCond)
+
+	// Load counter and check bounds
+	idxVal := g.emitter.newTmp()
+	g.emitter.emitf("%s = load i64, i64* %s", idxVal, idxTmp)
+
+	// Compare with length
+	condTmp := g.emitter.newTmp()
+	if lenPtr != "" {
+		// Slice: compare with dynamic length
+		g.emitter.emitf("%s = icmp ult i64 %s, %s", condTmp, idxVal, lenPtr)
+	} else {
+		// Array: compare with constant length
+		g.emitter.emitf("%s = icmp ult i64 %s, %d", condTmp, idxVal, arrLen)
+	}
+	g.emitter.emitf("br i1 %s, label %%%s, label %%%s", condTmp, lBody, lEnd)
+
+	// Body
 	g.emitter.emitRawf("%s:", lBody)
+
+	// Bind key (index)
+	if s.Key != nil {
+		g.emitter.emitf("store i64 %s, i64* %%v.%s", idxVal, s.Key.Name)
+	}
+
+	// Bind value (element at index)
+	if s.Value != nil {
+		eltPtrTmp := g.emitter.newTmp()
+		if lenPtr == "" {
+			// Array: GEP with array type
+			g.emitter.emitf("%s = getelementptr %s, %s* %s, i64 0, i64 %s", eltPtrTmp, baseType.LLVMType(), baseType.LLVMType(), basePtr, idxVal)
+		} else {
+			// Slice: GEP with element type (pointer to first element)
+			g.emitter.emitf("%s = getelementptr %s, %s* %s, i64 %s", eltPtrTmp, eltType.LLVMType(), eltType.LLVMType(), basePtr, idxVal)
+		}
+		eltValTmp := g.emitter.newTmp()
+		g.emitter.emitf("%s = load %s, %s* %s", eltValTmp, eltType.LLVMType(), eltType.LLVMType(), eltPtrTmp)
+		g.emitter.emitf("store %s %s, %s* %%v.%s", eltType.LLVMType(), eltValTmp, eltType.LLVMType(), s.Value.Name)
+	}
+
+	// Execute body
 	g.emitStmt(s.Body)
-	g.emitter.emitf("br label %%%s", lEnd)
+
+	g.emitter.emitf("br label %%%s", lInc)
+	g.emitter.emitRawf("%s:", lInc)
+
+	// Increment counter
+	idxVal2 := g.emitter.newTmp()
+	g.emitter.emitf("%s = load i64, i64* %s", idxVal2, idxTmp)
+	incTmp := g.emitter.newTmp()
+	g.emitter.emitf("%s = add i64 %s, 1", incTmp, idxVal2)
+	g.emitter.emitf("store i64 %s, i64* %s", incTmp, idxTmp)
+
+	g.emitter.emitf("br label %%%s", lCond)
 	g.emitter.emitRawf("%s:", lEnd)
 
 	delete(g.loopEnds, "")

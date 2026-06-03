@@ -549,13 +549,15 @@ func (p *Parser) parseForStmt() Stmt {
 	p.expect(lexer.T_FOR)
 
 	// Check for range
-	if p.tok.Type == lexer.T_IDENT && p.peek.Type == lexer.T_COLON_ASSIGN {
+	if p.tok.Type == lexer.T_IDENT {
 		key := p.parseIdent()
-		p.nextTok() // skip :=
 		var val *Ident
-		if p.tok.Type == lexer.T_IDENT {
+		// Check for "key, value := range" pattern
+		if p.tok.Type == lexer.T_COMMA {
+			p.nextTok() // skip comma
 			val = p.parseIdent()
 		}
+		p.expect(lexer.T_COLON_ASSIGN) // skip :=
 		p.expect(lexer.T_RANGE)
 		x := p.parseExpr()
 		body := p.parseBlock()
@@ -711,9 +713,34 @@ func (p *Parser) parsePrimaryExpr() Expr {
 			x = &SelectorExpr{X: x, Sel: p.parseIdent()}
 		case lexer.T_LBRACK:
 			p.nextTok()
-			idx := p.parseExpr()
-			p.expect(lexer.T_RBRACK)
-			x = &IndexExpr{X: x, Index: idx}
+			// Check for slice expression (has :)
+			if p.tok.Type == lexer.T_COLON {
+				// Slice with no low: arr[:high]
+				p.nextTok()
+				var high Expr
+				if p.tok.Type != lexer.T_RBRACK {
+					high = p.parseExpr()
+				}
+				p.expect(lexer.T_RBRACK)
+				x = &SliceExpr{X: x, Low: nil, High: high}
+			} else {
+				// Parse index or low bound
+				low := p.parseExpr()
+				if p.tok.Type == lexer.T_COLON {
+					// Slice expression: arr[low:high] or arr[low:]
+					p.nextTok()
+					var high Expr
+					if p.tok.Type != lexer.T_RBRACK {
+						high = p.parseExpr()
+					}
+					p.expect(lexer.T_RBRACK)
+					x = &SliceExpr{X: x, Low: low, High: high}
+				} else {
+					// Index expression: arr[idx]
+					p.expect(lexer.T_RBRACK)
+					x = &IndexExpr{X: x, Index: low}
+				}
+			}
 		default:
 			return x
 		}

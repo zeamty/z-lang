@@ -154,6 +154,16 @@ func (tr *TypeResolver) exprType(expr parser.Expr) types.Type {
 			return p.Base
 		}
 		return types.BasicTypes["int64"]
+
+	case *parser.SliceExpr:
+		base := tr.exprType(e.X)
+		if arr, ok := base.(*types.Array); ok {
+			return &types.Slice{Elt: arr.Elt}
+		}
+		if sl, ok := base.(*types.Slice); ok {
+			return sl
+		}
+		return types.BasicTypes["int64"]
 	}
 
 	return types.BasicTypes["int64"]
