@@ -430,7 +430,7 @@ qemu-system-x86_64 -cdrom os.iso -no-reboot
 | M6 | OS demo boots to VGA output | ✅ Done (pure Z code) |
 | M7 | OS demo with interrupts | 🔜 Next |
 
-## Current Implementation Status (2026-06-03)
+## Current Implementation Status (2026-06-04)
 
 ### Lexer: Complete
 - All keywords, operators, literals (hex, octal, binary, raw strings, runes)
@@ -448,6 +448,9 @@ qemu-system-x86_64 -cdrom os.iso -no-reboot
 - Slice expression: `arr[low:high]` (SliceExpr)
 - `StarExpr`/`AddrExpr`/`CastExpr`/`SliceExpr` AST nodes
 - For-range: `for key, value := range expr`
+- **New**: `KeyedElement` for keyed struct literals (`Field: Value`)
+- Composite literal parsing: `Type{elements}`
+- Label statement: `label:` + `goto label`
 
 ### Semantic Analysis: Complete
 - Scope resolution (package, function, block scopes)
@@ -455,6 +458,7 @@ qemu-system-x86_64 -cdrom os.iso -no-reboot
 - Directive validation (`//z:interrupt`)
 - `DeclStmt`, `CastExpr`, `StarExpr`, `SelectorExpr`, `AddrExpr`, `SliceExpr` checking
 - For-range scope binding (key/value variables)
+- CompositeLit type resolution
 
 ### Codegen: Complete
 - Emitter + TypeResolver pattern
@@ -466,12 +470,17 @@ qemu-system-x86_64 -cdrom os.iso -no-reboot
 - Type casts (`bitcast`), pointer dereference (`load`/`store`)
 - Parameter type matching with `trunc`/`sext`
 - Local variable type tracking
-- **New P0 Features**:
+- **P0 Features**:
   - `AddrExpr`: address-of `&x` returns pointer
   - `SliceExpr`: `arr[low:high]` returns slice struct `{ptr, len}`
   - `ForRangeStmt`: proper iteration with counter, bounds check, key/value binding
   - `IndexExpr LHS`: `arr[i] = value` array element assignment
   - `CompositeLit`: basic array/struct literal initialization
+- **Latest Features**:
+  - Struct field access (`p.X`): GEP + load for field values
+  - Keyed struct literals (`Point{X: 1, Y: 2}`): field-by-field initialization
+  - Struct assignment: memcpy for struct-to-struct copy
+  - Labels and goto: `br label %L.name` + `L.name:` definition
 
 ### Standard Library: Complete
 - `asm` — `Instr`, `Block`, `In`, `Out`, `InOut`, `Clobbers`

@@ -227,16 +227,11 @@ type Header struct {
 - Parser: full expression/statement grammar, :=, var/const blocks, iota, named returns, labels, import blocks, type casts, pointer dereference, address-of (`&x`), slice expressions (`arr[low:high]`)
 - Semantic Analysis: scope resolution, type checking, directive validation, builtin type recognition
 - Codegen: Emitter + TypeResolver, functions, control flow (if/for/switch/defer/goto), structs, pointers, type casts, inline assembly, builtin intrinsics
-- **New**: `AddrExpr` (`&x`), `SliceExpr` (`arr[low:high]`), `ForRangeStmt` (`for i, v := range arr`), array indexing LHS (`arr[i] = value`), CompositeLit basic impl
+- **New**: `AddrExpr` (`&x`), `SliceExpr` (`arr[low:high]`), `ForRangeStmt` (`for i, v := range arr`), array indexing LHS (`arr[i] = value`), CompositeLit
+- **Latest**: struct field access (`p.X`), keyed struct literals (`Point{X: 1, Y: 2}`), labels and `goto`
 - Standard Library: asm, unsafe, atomic, mem, errors packages
 - CLI: multi-file input, build tags (`//z:build`), `-emit-llvm` flag
 - OS Demo: VGA text output via pure Z code (no `asm.Instr`)
-
-**In Progress**:
-- Struct field access codegen
-- Full CompositeLit (keyed struct literals)
-- Full OS demo with interrupts (GDT, IDT, paging)
-- Better error messages with source locations
 
 ## License
 
