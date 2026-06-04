@@ -372,8 +372,17 @@ type SliceExpr struct {
 
 type CompositeLit struct {
 	Type Type
-	Elts []Expr
+	Elts []Expr  // Either Expr or *KeyedElement
 }
+
+// KeyedElement represents keyed struct literal element: Field: Value
+type KeyedElement struct {
+	Key   *Ident
+	Value Expr
+}
+
+func (KeyedElement) node()    {}
+func (KeyedElement) exprNode() {}
 
 type StarExpr struct {
 	X Expr

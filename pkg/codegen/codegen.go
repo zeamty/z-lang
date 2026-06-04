@@ -261,7 +261,49 @@ func (g *Generator) emitExpr(expr parser.Expr) string {
 		return tmp
 
 	case *parser.SelectorExpr:
-		return g.emitExpr(e.X) + "." + e.Sel.Name
+		// Struct field access: p.X or pkg.Func (handle package selector separately)
+		// Check if this is a package selector (unsafe.Pointer, asm.Instr, etc.)
+		if ident, ok := e.X.(*parser.Ident); ok {
+			// Check if it's a package name
+			if ident.Name == "unsafe" || ident.Name == "asm" || ident.Name == "mem" || ident.Name == "atomic" || ident.Name == "errors" {
+				// Package selector - just return identifier for builtin handling
+				return ident.Name + "." + e.Sel.Name
+			}
+		}
+		// Struct field access: compute GEP and load value
+		var base string
+		if ident, ok := e.X.(*parser.Ident); ok {
+			// Local variable: use alloca address
+			base = "%v." + ident.Name
+		} else {
+			base = g.emitExpr(e.X)
+		}
+		// Get struct type
+		baseType := g.tr.exprType(e.X)
+		st, ok := baseType.(*types.Struct)
+		if !ok {
+			// Not a struct, return base (might be package selector fallback)
+			return base
+		}
+		// Find field index
+		fieldIdx := -1
+		for i, f := range st.Fields {
+			if f.Name == e.Sel.Name {
+				fieldIdx = i
+				break
+			}
+		}
+		if fieldIdx < 0 {
+			fieldIdx = 0 // default to first field
+		}
+		// GEP to field
+		fieldPtr := g.emitter.newTmp()
+		g.emitter.emitf("%s = getelementptr %s, %s* %s, i64 0, i32 %d", fieldPtr, st.LLVMType(), st.LLVMType(), base, fieldIdx)
+		// Load field value
+		fieldType := st.Fields[fieldIdx].Type
+		valTmp := g.emitter.newTmp()
+		g.emitter.emitf("%s = load %s, %s* %s", valTmp, fieldType.LLVMType(), fieldType.LLVMType(), fieldPtr)
+		return valTmp
 
 	case *parser.IndexExpr:
 		// For local arrays, use the alloca pointer directly
@@ -287,8 +329,8 @@ func (g *Generator) emitExpr(expr parser.Expr) string {
 	case *parser.CompositeLit:
 		// Array or struct literal initialization
 		if e.Type != nil {
-			typ := g.tr.resolveType(e.Type)
-			// Handle array type
+						typ := g.tr.resolveType(e.Type)
+						// Handle array type
 			if arr, ok := typ.(*types.Array); ok {
 				// Allocate array on stack
 				tmp := g.emitter.newTmp()
@@ -308,12 +350,33 @@ func (g *Generator) emitExpr(expr parser.Expr) string {
 				tmp := g.emitter.newTmp()
 				g.emitter.emitf("%s = alloca %s", tmp, st.LLVMType())
 				// Initialize each field
-				for i, elt := range e.Elts {
-					fieldTmp := g.emitter.newTmp()
-					g.emitter.emitf("%s = getelementptr %s, %s* %s, i64 0, i32 %d", fieldTmp, st.LLVMType(), st.LLVMType(), tmp, i)
-					val := g.emitExpr(elt)
-					if i < len(st.Fields) {
-						g.emitter.emitf("store %s %s, %s* %s", st.Fields[i].Type.LLVMType(), val, st.Fields[i].Type.LLVMType(), fieldTmp)
+				for _, elt := range e.Elts {
+					// Check if it's a keyed element
+					if ke, ok := elt.(*parser.KeyedElement); ok {
+						// Find field index by name
+						fieldIdx := -1
+						for i, f := range st.Fields {
+							if f.Name == ke.Key.Name {
+								fieldIdx = i
+								break
+							}
+						}
+						if fieldIdx >= 0 {
+							fieldTmp := g.emitter.newTmp()
+							g.emitter.emitf("%s = getelementptr %s, %s* %s, i64 0, i32 %d", fieldTmp, st.LLVMType(), st.LLVMType(), tmp, fieldIdx)
+							val := g.emitExpr(ke.Value)
+							g.emitter.emitf("store %s %s, %s* %s", st.Fields[fieldIdx].Type.LLVMType(), val, st.Fields[fieldIdx].Type.LLVMType(), fieldTmp)
+						}
+					} else {
+						// Positional element: use sequential index
+						// Find next uninitialized field
+						for i := range st.Fields {
+							fieldTmp := g.emitter.newTmp()
+							g.emitter.emitf("%s = getelementptr %s, %s* %s, i64 0, i32 %d", fieldTmp, st.LLVMType(), st.LLVMType(), tmp, i)
+							val := g.emitExpr(elt)
+							g.emitter.emitf("store %s %s, %s* %s", st.Fields[i].Type.LLVMType(), val, st.Fields[i].Type.LLVMType(), fieldTmp)
+							break // only first positional for now
+						}
 					}
 				}
 				return tmp
@@ -609,8 +672,18 @@ func (g *Generator) emitStmt(stmt parser.Stmt) {
 						volatileStr = " volatile"
 					}
 				}
-				g.emitter.emitf("store%s %s %s, %s* %%v.%s",
-					volatileStr, typ.LLVMType(), rhs, typ.LLVMType(), ident.Name)
+								// Check if we need to copy a struct (rhs is pointer to struct)
+				if st, ok := typ.(*types.Struct); ok {
+					// RHS might be a pointer to struct (from CompositeLit)
+					// Need to either memcpy or load+store
+					// Use memcpy for efficiency
+					size := st.Size()
+					g.emitter.emitf("call void @llvm.memcpy.p0i8.p0i8.i64(i8* %%v.%s, i8* %s, i64 %d, i1 false)",
+						ident.Name, rhs, size)
+				} else {
+					g.emitter.emitf("store%s %s %s, %s* %%v.%s",
+						volatileStr, typ.LLVMType(), rhs, typ.LLVMType(), ident.Name)
+				}
 			} else if se, ok := lhs.(*parser.StarExpr); ok {
 				rhs := g.emitExpr(s.Rhs[i])
 				ptr := g.emitExpr(se.X)
@@ -719,10 +792,15 @@ func (g *Generator) emitStmt(stmt parser.Stmt) {
 		}
 
 	case *parser.GotoStmt:
-		label := fmt.Sprintf("goto.%s", s.Label.Name)
-		g.emitter.emitf("br label %%%s", label)
+		g.emitter.emitf("br label %%L.%s", s.Label.Name)
 
-	// case *parser.LabeledStmt: // Not yet available in parser
+	case *parser.LabeledStmt:
+		// Add branch to label (entry block needs terminator)
+		g.emitter.emitf("br label %%L.%s", s.Label.Name)
+		// Define label and emit statement
+		g.emitter.emitRawf("L.%s:", s.Label.Name)
+		g.emitStmt(s.Stmt)
+
 	}
 }
 
@@ -1131,5 +1209,7 @@ func (g *Generator) collectExprStrings(expr parser.Expr) {
 		g.collectExprStrings(e.Index)
 	case *parser.SelectorExpr:
 		g.collectExprStrings(e.X)
+	case *parser.KeyedElement:
+		g.collectExprStrings(e.Value)
 	}
 }

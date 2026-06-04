@@ -164,6 +164,12 @@ func (tr *TypeResolver) exprType(expr parser.Expr) types.Type {
 			return sl
 		}
 		return types.BasicTypes["int64"]
+
+	case *parser.CompositeLit:
+		if e.Type != nil {
+			return tr.resolveType(e.Type)
+		}
+		return types.BasicTypes["int64"]
 	}
 
 	return types.BasicTypes["int64"]

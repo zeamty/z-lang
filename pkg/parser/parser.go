@@ -741,6 +741,15 @@ func (p *Parser) parsePrimaryExpr() Expr {
 					x = &IndexExpr{X: x, Index: low}
 				}
 			}
+		case lexer.T_LBRACE:
+			// Composite literal: Type{elements}
+			// x should be a type name (Ident or SelectorExpr like pkg.Type)
+			typ := p.exprToType(x)
+			if typ == nil {
+				// Not a composite literal - the { belongs to a block statement
+				return x
+			}
+			x = p.parseCompositeLit(typ)
 		default:
 			return x
 		}
@@ -828,7 +837,16 @@ func (p *Parser) parseCompositeLit(typ Type) *CompositeLit {
 	lit := &CompositeLit{Type: typ}
 
 	for p.tok.Type != lexer.T_RBRACE && p.tok.Type != lexer.T_EOF {
-		lit.Elts = append(lit.Elts, p.parseExpr())
+		// Check for keyed element: IDENT ':' value
+		if p.tok.Type == lexer.T_IDENT && p.peek.Type == lexer.T_COLON {
+			key := p.parseIdent()
+			p.expect(lexer.T_COLON) // consume colon
+			val := p.parseExpr()
+			lit.Elts = append(lit.Elts, &KeyedElement{Key: key, Value: val})
+		} else {
+			// Positional element
+			lit.Elts = append(lit.Elts, p.parseExpr())
+		}
 		if p.tok.Type == lexer.T_COMMA {
 			p.nextTok()
 		} else {

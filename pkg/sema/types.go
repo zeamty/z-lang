@@ -125,6 +125,10 @@ func (tc *TypeChecker) CheckExpr(expr parser.Expr) parser.Type {
 		}
 		return nil
 
+	case *parser.KeyedElement:
+		// Keyed element in struct literal: Key: Value
+		return tc.CheckExpr(e.Value)
+
 	case *parser.CastExpr:
 		return e.Type
 	}
